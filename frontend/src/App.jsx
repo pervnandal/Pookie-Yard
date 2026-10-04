@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Dynamic API URLs based on environment (Local vs Production)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
@@ -236,7 +237,6 @@ const LoginScreen = ({ onLogin, showDialog }) => {
 };
 
 const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
-  // Mobile UI Fix: Ensure the Date aligns with requested Anniversary
   const ANNIVERSARY_DATE = "2026-05-04"; 
   
   const calculateDaysTogether = () => {
@@ -257,7 +257,6 @@ const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
             </h1>
           </div>
           
-          {/* Mobile UI Fix: Compact horizontal navigation so it fits cleanly on one screen line */}
           <nav className="flex items-center space-x-3 sm:space-x-8">
             <button onClick={() => setActiveTab('vault')} className={`text-sm sm:text-base font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'vault' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
               <span className="hidden sm:inline">Memory </span>Vault
@@ -303,18 +302,27 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
   const actualCover = displayMedia ? displayMedia.file_url : coverImage;
 
   return (
-    /* Mobile UI Fix: onClick moved to absolute highest wrapper to guarantee touch target */
     <div className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-stone-100 group cursor-pointer flex flex-col h-full relative"
          tabIndex="0" 
          onClick={() => onClick(memory)}
          onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
     >
       <div className="relative h-64 overflow-hidden bg-stone-900">
+        
         {isVideo(actualCover) ? (
-          <video src={actualCover} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
+          <video src={actualCover} className="relative z-10 w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
         ) : (
-          <img src={actualCover} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" />
+          <img src={actualCover} loading="lazy" alt={memory.title} className="relative z-10 w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" />
         )}
+        
+        {/* Mobile UI Fix: Trash Can moved safely to Top-Left to completely avoid Pookie overlap */}
+        <button 
+          onClick={(e) => { e.stopPropagation(); onDeleteClick(memory); }}
+          className="absolute top-4 left-4 p-2 bg-white text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors z-30 shadow-md focus:outline-none focus:ring-2 focus:ring-red-500"
+          title="Delete entire memory album"
+        >
+          <Icons.Trash />
+        </button>
         
         <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold text-stone-700 shadow-sm z-20 flex items-center gap-1.5">
           {memory.is_private && <span className="text-rose-500"><Icons.Lock /></span>}
@@ -337,14 +345,6 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
           {memory.description || "No description provided."}
         </p>
       </div>
-
-      <button 
-        onClick={(e) => { e.stopPropagation(); onDeleteClick(memory); }}
-        className="absolute bottom-4 right-4 p-2.5 text-stone-300 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors z-10 focus:outline-none focus:ring-2 focus:ring-red-500"
-        title="Delete entire memory album"
-      >
-        <Icons.Trash />
-      </button>
     </div>
   );
 };
@@ -392,7 +392,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isEditingDesc, mediaList.length]);
+  }, [isOpen, isEditingDesc, mediaList.length, handleNext, handlePrev]);
 
   if (!isOpen || !memory) return null;
 
@@ -479,12 +479,13 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     }
   };
 
+  /* GPU Optimization: All heavy backdrop-blurs removed from the gallery for 60fps performance */
   return (
     <div className="fixed inset-0 z-[100] flex bg-stone-950 text-white animate-in fade-in duration-300">
       {!isFullscreen && (
         <div className="w-80 bg-stone-950 border-r border-stone-800 flex-col hidden md:flex shrink-0 z-50">
           <div className="p-5 border-b border-stone-800 flex items-center justify-between">
-            <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-stone-400 hover:text-white" title="Close Gallery (Esc)"><Icons.ArrowLeft /></button>
+            <button onClick={onClose} className="p-2 hover:bg-stone-800 rounded-full transition-colors text-stone-400 hover:text-white" title="Close Gallery (Esc)"><Icons.ArrowLeft /></button>
             <h2 className="text-lg font-serif font-bold text-stone-200">Vault Albums</h2>
             <div className="w-8"></div>
           </div>
@@ -513,8 +514,8 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                       {m.is_private && <span className="text-rose-500 opacity-80"><Icons.Lock /></span>}
                     </div>
                   </button>
-                  {isExpanded && (
-                    <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 pt-2 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
+                  <div className={`transition-all duration-300 overflow-hidden ${isExpanded ? 'max-h-96 opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
+                    <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
                       {m.memory_media?.map((media, idx) => (
                         <button key={media.id} onClick={(e) => { e.stopPropagation(); if(m.id !== memory.id) onSelectMemory(m); setCurrentIndex(idx); }}
                           className={`relative aspect-square rounded-md overflow-hidden bg-black transition-all flex items-center justify-center ${m.id === memory.id && currentIndex === idx ? 'ring-2 ring-rose-500 scale-105 z-10' : 'opacity-60 hover:opacity-100'}`}>
@@ -522,7 +523,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                         </button>
                       ))}
                     </div>
-                  )}
+                  </div>
                 </div>
               );
             })}
@@ -557,9 +558,9 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                    <audio src={activeMedia.file_url} controls className="w-full outline-none" autoPlay />
                 </div>
               ) : isVideo(activeMedia.file_url) ? (
-                <video src={activeMedia.file_url} controls autoPlay className="w-full h-full object-contain rounded-sm" />
+                <video src={activeMedia.file_url} controls autoPlay className="w-full h-full object-contain shadow-2xl rounded-sm" />
               ) : (
-                <img src={activeMedia.file_url} alt="Memory Viewer" className="w-full h-full object-contain" />
+                <img src={activeMedia.file_url} alt="Memory Viewer" className="w-full h-full object-contain shadow-2xl transition-transform duration-300" />
               )}
               {mediaList.length > 1 && (
                 <>
@@ -1053,7 +1054,7 @@ const DatePlanner = ({ showDialog }) => {
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
       
-      /* Cross-device sync check */
+      // Sync plans seamlessly when a partner edits/creates/deletes on another device
       if (data.type === 'refresh_plans') {
          fetch(`${API_BASE_URL}/api/itineraries`)
            .then(res => res.json())
@@ -1075,7 +1076,7 @@ const DatePlanner = ({ showDialog }) => {
       else if (data.type === 'typing') {
         if (data.field === 'chat') setPartnerTyping(data.isTyping);
         else if (data.field === 'pad') {
-           /* Sync typing only for active document */
+           // Ensure typing indicator only shows if partner is in the SAME document
            if (data.docId === activeDocId) setPartnerEditing(data.isTyping);
         }
       } 
@@ -1240,9 +1241,14 @@ const DatePlanner = ({ showDialog }) => {
     });
   };
 
+  /* 
+    CRITICAL ARCHITECTURE: 
+    - Desktop uses strictly dynamic math (md:h-full derived from md:h-[calc(100vh-6rem)]) so it NEVER squishes.
+    - Mobile completely disables dynamic math. Chat is an un-squishable 500px block. Notepad is a 600px block. 
+  */
   return (
-    <div className="w-full flex flex-col md:flex-row gap-6">
-      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-[calc(100vh-12rem)] min-h-[400px]">
+    <>
+      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-full shrink-0">
         <div className="bg-stone-50 border-b border-stone-100 p-5 shrink-0 flex items-center justify-between">
            <div>
              <h3 className="font-serif font-bold text-lg text-stone-800">Live Planner</h3>
@@ -1314,8 +1320,8 @@ const DatePlanner = ({ showDialog }) => {
         </form>
       </div>
 
-      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[600px] md:h-[calc(100vh-12rem)] min-h-[400px]">
-         <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0 h-48 md:h-full">
+      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[600px] md:h-full shrink-0">
+         <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-b md:border-b-0 md:border-r border-stone-200 flex flex-col shrink-0 h-[150px] md:h-full">
             <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50 shrink-0">
                <span className="font-bold text-stone-700 font-sans text-sm tracking-wide uppercase">Plans</span>
                <button onClick={createNewPlan} className="text-rose-500 hover:bg-rose-100 p-1.5 rounded-md transition-colors" title="New Plan"><Icons.Plus /></button>
@@ -1351,7 +1357,7 @@ const DatePlanner = ({ showDialog }) => {
             </div>
          </div>
 
-         <div className="flex-1 flex flex-col relative min-w-0 h-full">
+         <div className="flex-1 flex flex-col relative min-w-0 min-h-0 overflow-hidden">
              {activeDocId ? (
                 <>
                    <div className="bg-white border-b border-stone-100 p-4 shrink-0 flex items-center justify-between z-10 shadow-sm relative">
@@ -1381,7 +1387,7 @@ const DatePlanner = ({ showDialog }) => {
              )}
          </div>
       </div>
-    </div>
+    </>
   );
 };
 
@@ -1596,9 +1602,9 @@ export default function App() {
 
       <Header onAddClick={() => setIsAddModalOpen(true)} activeTab={activeTab} setActiveTab={setActiveTab} onLogout={() => { localStorage.removeItem('us_auth'); setIsAuthenticated(false); }} />
       
-      <main className="flex-1 w-full relative z-10 flex flex-col">
+      <main className="flex-1 w-full relative z-10 flex flex-col min-h-0">
         {activeTab === 'vault' && (
-          <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12">
+          <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-40">
             <div className="text-center mb-16 relative z-10">
               <h2 className="text-5xl font-serif text-stone-800 mb-4 tracking-tight drop-shadow-sm">Our Memory Vault</h2>
               <p className="text-stone-600 max-w-2xl mx-auto text-lg">
@@ -1642,14 +1648,13 @@ export default function App() {
         )}
 
         {activeTab === 'chronicle' && (
-           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12">
+           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-40">
               <ChronicleView showDialog={showDialog} onOpenMemory={setSelectedMemory} />
            </div>
         )}
 
-        {/* Date Planner Layout Fix: Precisely targets desktop dynamic height sizing */}
         {activeTab === 'planner' && (
-           <div className="max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8">
+           <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row gap-6 md:h-[calc(100vh-6rem)] pb-32 md:pb-8">
               <DatePlanner showDialog={showDialog} />
            </div>
         )}
