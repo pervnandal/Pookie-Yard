@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// Dynamic API URLs based on environment (Local vs Production)
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
 
@@ -237,7 +236,8 @@ const LoginScreen = ({ onLogin, showDialog }) => {
 };
 
 const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
-  const ANNIVERSARY_DATE = "2022-01-01"; 
+  // Mobile UI Fix: Ensure the Date aligns with requested Anniversary
+  const ANNIVERSARY_DATE = "2026-05-04"; 
   
   const calculateDaysTogether = () => {
     const start = new Date(ANNIVERSARY_DATE); 
@@ -252,35 +252,36 @@ const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
         <div className="flex justify-between items-center h-20">
           <div className="flex items-center gap-2">
             <span className="text-3xl">🌸</span>
-            <h1 className="text-2xl font-serif font-bold text-stone-800 tracking-tight hidden sm:block">
+            <h1 className="text-2xl font-serif font-bold text-stone-800 tracking-tight hidden lg:block">
               The <span className="text-rose-500 italic">Us</span> Space
             </h1>
           </div>
           
-          <nav className="flex space-x-4 sm:space-x-8 overflow-x-auto custom-scrollbar px-2 sm:px-0">
-            <button onClick={() => setActiveTab('vault')} className={`font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'vault' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
-              Memory Vault
+          {/* Mobile UI Fix: Compact horizontal navigation so it fits cleanly on one screen line */}
+          <nav className="flex items-center space-x-3 sm:space-x-8">
+            <button onClick={() => setActiveTab('vault')} className={`text-sm sm:text-base font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'vault' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
+              <span className="hidden sm:inline">Memory </span>Vault
             </button>
-            <button onClick={() => setActiveTab('chronicle')} className={`font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'chronicle' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
+            <button onClick={() => setActiveTab('chronicle')} className={`text-sm sm:text-base font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'chronicle' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
               Chronicle
             </button>
-            <button onClick={() => setActiveTab('planner')} className={`font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'planner' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
+            <button onClick={() => setActiveTab('planner')} className={`text-sm sm:text-base font-medium pb-1 whitespace-nowrap transition-colors ${activeTab === 'planner' ? 'text-rose-500 border-b-2 border-rose-500' : 'text-stone-500 hover:text-stone-800'}`}>
               Planner
             </button>
           </nav>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <div className="hidden md:flex items-center gap-2 bg-rose-50 px-4 py-1.5 rounded-full border border-rose-100 shadow-sm mr-1">
                <span className="text-rose-500 animate-pulse text-xs">❤️</span>
                <span className="text-xs font-bold text-rose-600 font-sans whitespace-nowrap">{calculateDaysTogether()} Days</span>
             </div>
             <button 
               onClick={onAddClick}
-              className="bg-stone-900 hover:bg-stone-800 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full font-medium transition-all shadow-sm hover:shadow-md transform hover:-translate-y-0.5 flex items-center gap-2"
+              className="bg-stone-900 hover:bg-stone-800 text-white p-2 sm:px-5 sm:py-2.5 rounded-full font-medium transition-all shadow-sm hover:shadow-md transform hover:-translate-y-0.5 flex items-center gap-2"
             >
               <Icons.Plus /> <span className="hidden sm:inline">Add</span>
             </button>
-            <button onClick={onLogout} className="text-stone-400 hover:text-rose-500 transition-colors p-2" title="Lock Vault">
+            <button onClick={onLogout} className="text-stone-400 hover:text-rose-500 transition-colors p-2 hidden sm:block" title="Lock Vault">
               <Icons.Lock />
             </button>
           </div>
@@ -302,12 +303,13 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
   const actualCover = displayMedia ? displayMedia.file_url : coverImage;
 
   return (
+    /* Mobile UI Fix: onClick moved to absolute highest wrapper to guarantee touch target */
     <div className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-xl transition-all duration-300 border border-stone-100 group cursor-pointer flex flex-col h-full relative"
          tabIndex="0" 
+         onClick={() => onClick(memory)}
          onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
     >
-      <div className="relative h-64 overflow-hidden bg-stone-900" onClick={() => onClick(memory)}>
-        {/* OPTIMIZATION: Clean, high-performance object-cover without heavy CSS blurring filters */}
+      <div className="relative h-64 overflow-hidden bg-stone-900">
         {isVideo(actualCover) ? (
           <video src={actualCover} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
         ) : (
@@ -327,7 +329,7 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
         )}
       </div>
       
-      <div className="p-6 flex flex-col flex-grow relative" onClick={() => onClick(memory)}>
+      <div className="p-6 flex flex-col flex-grow relative">
         <h3 className="text-xl font-serif font-semibold text-stone-800 mb-2 group-hover:text-rose-600 transition-colors pr-8 flex items-center gap-2">
           {memory.title}
         </h3>
@@ -390,7 +392,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isEditingDesc, mediaList.length, handleNext, handlePrev]);
+  }, [isOpen, isEditingDesc, mediaList.length]);
 
   if (!isOpen || !memory) return null;
 
@@ -511,7 +513,6 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                       {m.is_private && <span className="text-rose-500 opacity-80"><Icons.Lock /></span>}
                     </div>
                   </button>
-                  {/* OPTIMIZATION: Only render thumbnails if the album is expanded to save massive DOM/Network overhead */}
                   {isExpanded && (
                     <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 pt-2 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
                       {m.memory_media?.map((media, idx) => (
@@ -1051,6 +1052,15 @@ const DatePlanner = ({ showDialog }) => {
     ws.current = new WebSocket(`${WS_BASE_URL}/ws/chat`);
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      
+      /* Cross-device sync check */
+      if (data.type === 'refresh_plans') {
+         fetch(`${API_BASE_URL}/api/itineraries`)
+           .then(res => res.json())
+           .then(fetchedDocs => setItineraries(fetchedDocs || []));
+         return;
+      }
+
       if (data.senderId === userId) return;
 
       if (data.type === 'chat') {
@@ -1064,7 +1074,10 @@ const DatePlanner = ({ showDialog }) => {
       }
       else if (data.type === 'typing') {
         if (data.field === 'chat') setPartnerTyping(data.isTyping);
-        else if (data.field === 'pad') setPartnerEditing(data.isTyping);
+        else if (data.field === 'pad') {
+           /* Sync typing only for active document */
+           if (data.docId === activeDocId) setPartnerEditing(data.isTyping);
+        }
       } 
       else if (data.type === 'itinerary') {
         setItineraries(prev => prev.map(doc => doc.id === data.docId ? { ...doc, content: data.text } : doc));
@@ -1116,7 +1129,7 @@ const DatePlanner = ({ showDialog }) => {
     
     if (ws.current && ws.current.readyState === WebSocket.OPEN) {
       ws.current.send(JSON.stringify({ type: 'itinerary', docId: activeDocId, text: newText, senderId: userId }));
-      ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: true, field: 'pad' }));
+      ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: true, field: 'pad', docId: activeDocId }));
       clearTimeout(padTypingTimeoutRef.current);
       padTypingTimeoutRef.current = setTimeout(() => ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: false, field: 'pad' })), 1500);
     }
@@ -1172,6 +1185,7 @@ const DatePlanner = ({ showDialog }) => {
           const newDoc = await res.json();
           setItineraries(prev => [newDoc, ...prev]);
           setActiveDocId(newDoc.id);
+          if (ws.current) ws.current.send(JSON.stringify({ type: 'refresh_plans' }));
         } catch (e) {
           console.error("Failed to create plan", e);
         }
@@ -1196,6 +1210,7 @@ const DatePlanner = ({ showDialog }) => {
           });
           if (res.ok) {
             setItineraries(prev => prev.map(i => i.id === doc.id ? { ...i, title: newTitle.trim() } : i));
+            if (ws.current) ws.current.send(JSON.stringify({ type: 'refresh_plans' }));
           }
         } catch (e) {
           console.error("Failed to rename plan", e);
@@ -1217,6 +1232,7 @@ const DatePlanner = ({ showDialog }) => {
           setItineraries(remaining);
           if (remaining.length > 0) setActiveDocId(remaining[0].id);
           else setActiveDocId(null);
+          if (ws.current) ws.current.send(JSON.stringify({ type: 'refresh_plans' }));
         } catch (e) {
           console.error("Failed to delete plan", e);
         }
@@ -1226,8 +1242,7 @@ const DatePlanner = ({ showDialog }) => {
 
   return (
     <div className="w-full flex flex-col md:flex-row gap-6">
-      {/* OPTIMIZATION: Dynamic viewport height calculation (calc 100vh) keeps it perfectly bounded to screen size */}
-      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[50vh] md:h-[calc(100vh-12rem)] min-h-[400px]">
+      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-[calc(100vh-12rem)] min-h-[400px]">
         <div className="bg-stone-50 border-b border-stone-100 p-5 shrink-0 flex items-center justify-between">
            <div>
              <h3 className="font-serif font-bold text-lg text-stone-800">Live Planner</h3>
@@ -1299,7 +1314,7 @@ const DatePlanner = ({ showDialog }) => {
         </form>
       </div>
 
-      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[60vh] md:h-[calc(100vh-12rem)] min-h-[400px]">
+      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[600px] md:h-[calc(100vh-12rem)] min-h-[400px]">
          <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0 h-48 md:h-full">
             <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50 shrink-0">
                <span className="font-bold text-stone-700 font-sans text-sm tracking-wide uppercase">Plans</span>
@@ -1632,7 +1647,7 @@ export default function App() {
            </div>
         )}
 
-        {/* OPTIMIZATION: Main Planner container wrapper allows natural height control */}
+        {/* Date Planner Layout Fix: Precisely targets desktop dynamic height sizing */}
         {activeTab === 'planner' && (
            <div className="max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8">
               <DatePlanner showDialog={showDialog} />
