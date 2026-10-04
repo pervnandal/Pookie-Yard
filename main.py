@@ -15,10 +15,7 @@ from dotenv import load_dotenv
 from supabase import create_client, Client
 from groq import Groq
 
-# Load environment variables
 load_dotenv()
-
-# Initialize FastAPI
 app = FastAPI()
 
 app.add_middleware(
@@ -45,19 +42,10 @@ async def login(req: LoginRequest):
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-if SUPABASE_URL and SUPABASE_KEY:
-    supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-else:
-    supabase = None
-    print("WARNING: Supabase credentials not found in .env")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-if GROQ_API_KEY:
-    groq_client = Groq(api_key=GROQ_API_KEY)
-else:
-    groq_client = None
-    print("WARNING: Groq API key not found in .env")
+groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
 class ConnectionManager:
     def __init__(self):
@@ -86,9 +74,79 @@ async def websocket_endpoint(websocket: WebSocket):
     try:
         while True:
             data = await websocket.receive_text()
+            parsed_data = json.loads(data)
+            if parsed_data.get("type") == "chat" and supabase:
+                try:
+                    supabase.table("chat_messages").insert({
+                        "sender_id": parsed_data.get("senderId", ""),
+                        "text": parsed_data.get("text", ""),
+                        "audio": parsed_data.get("audio", ""),
+                        "timestamp": parsed_data.get("timestamp", "")
+                    }).execute()
+                except Exception as e:
+                    print("Failed to save chat:", e)
+                    
             await manager.broadcast(data)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+@app.get("/api/chats")
+async def get_chats():
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
+    try:
+        resp = supabase.table("chat_messages").select("*").order("created_at", desc=False).execute()
+        return resp.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/itineraries")
+async def get_itineraries():
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
+    try:
+        resp = supabase.table("itineraries").select("*").order("updated_at", desc=True).execute()
+        return resp.data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ItineraryCreate(BaseModel):
+    title: str
+
+@app.post("/api/itineraries")
+async def create_itinerary(req: ItineraryCreate):
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
+    try:
+        resp = supabase.table("itineraries").insert({"title": req.title, "content": ""}).execute()
+        return resp.data[0]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class ItineraryUpdate(BaseModel):
+    content: Optional[str] = None
+    title: Optional[str] = None
+
+@app.put("/api/itineraries/{doc_id}")
+async def update_itinerary(doc_id: int, req: ItineraryUpdate):
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
+    try:
+        update_data = {"updated_at": datetime.now().isoformat()}
+        if req.content is not None:
+            update_data["content"] = req.content
+        if req.title is not None:
+            update_data["title"] = req.title
+            
+        supabase.table("itineraries").update(update_data).eq("id", doc_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.delete("/api/itineraries/{doc_id}")
+async def delete_itinerary(doc_id: int):
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
+    try:
+        supabase.table("itineraries").delete().eq("id", doc_id).execute()
+        return {"success": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/memories")
 async def get_memories():
@@ -113,9 +171,7 @@ async def create_memory(
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected.")
     try:
-        # Convert string to boolean
         is_priv_bool = is_private.lower() == 'true'
-
         mem_resp = supabase.table("memories").insert({
             "memory_date": date,
             "title": title,
@@ -131,17 +187,10 @@ async def create_memory(
             file_bytes = await file.read()
             
             supabase.storage.from_("memory_images").upload(
-                file_name,
-                file_bytes,
-                {"content-type": file.content_type}
+                file_name, file_bytes, {"content-type": file.content_type}
             )
-            
             file_url = supabase.storage.from_("memory_images").get_public_url(file_name)
-            
-            supabase.table("memory_media").insert({
-                "memory_id": memory_id,
-                "file_url": file_url
-            }).execute()
+            supabase.table("memory_media").insert({"memory_id": memory_id, "file_url": file_url}).execute()
 
         return {"message": "Memory created successfully!", "memory_id": memory_id}
     except Exception as e:
@@ -152,8 +201,7 @@ class MemoryUpdate(BaseModel):
 
 @app.put("/api/memories/{memory_id}")
 async def update_memory(memory_id: int, memory_update: MemoryUpdate):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not connected.")
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("memories").update({"description": memory_update.description}).eq("id", memory_id).execute()
         return {"message": "Memory updated."}
@@ -162,8 +210,7 @@ async def update_memory(memory_id: int, memory_update: MemoryUpdate):
 
 @app.delete("/api/memories/{memory_id}")
 async def delete_memory(memory_id: int):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not connected.")
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("memories").delete().eq("id", memory_id).execute()
         return {"message": "Memory deleted."}
@@ -172,35 +219,23 @@ async def delete_memory(memory_id: int):
 
 @app.post("/api/memories/{memory_id}/media")
 async def add_media_to_memory(memory_id: int, files: List[UploadFile] = File(...)):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not connected.")
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         for file in files:
             file_ext = file.filename.split(".")[-1]
             file_name = f"memory_{memory_id}_{datetime.now().timestamp()}.{file_ext}"
             file_bytes = await file.read()
             
-            supabase.storage.from_("memory_images").upload(
-                file_name,
-                file_bytes,
-                {"content-type": file.content_type}
-            )
-            
+            supabase.storage.from_("memory_images").upload(file_name, file_bytes, {"content-type": file.content_type})
             file_url = supabase.storage.from_("memory_images").get_public_url(file_name)
-            
-            supabase.table("memory_media").insert({
-                "memory_id": memory_id,
-                "file_url": file_url
-            }).execute()
-
+            supabase.table("memory_media").insert({"memory_id": memory_id, "file_url": file_url}).execute()
         return {"message": "Media added successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/media/{media_id}")
 async def delete_media(media_id: int):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not connected.")
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("memory_media").delete().eq("id", media_id).execute()
         return {"message": "Media deleted."}
@@ -209,12 +244,10 @@ async def delete_media(media_id: int):
 
 @app.get("/api/memories/{memory_id}/download")
 async def download_album(memory_id: int):
-    if not supabase:
-        raise HTTPException(status_code=500, detail="Database not connected")
+    if not supabase: raise HTTPException(status_code=500, detail="Database not connected")
     try:
         media_resp = supabase.table("memory_media").select("file_url").eq("memory_id", memory_id).execute()
-        if not media_resp.data:
-            raise HTTPException(status_code=404, detail="No media found")
+        if not media_resp.data: raise HTTPException(status_code=404, detail="No media found")
             
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
@@ -240,18 +273,11 @@ async def download_album(memory_id: int):
 
 @app.get("/api/chronicle")
 async def get_daily_chronicle():
-    if not supabase or not groq_client:
-        raise HTTPException(status_code=500, detail="Services not configured.")
-        
+    if not supabase or not groq_client: raise HTTPException(status_code=500, detail="Services not configured.")
     try:
-        # Fetch ONLY public memories
-        resp = supabase.table("memories").select(
-            "id, title, description, memory_date, memory_media(file_url)"
-        ).eq("is_private", False).execute()
-        
+        resp = supabase.table("memories").select("id, title, description, memory_date, memory_media(file_url)").eq("is_private", False).execute()
         memories = resp.data
-        if not memories:
-            return {"memory": None, "article": "Your vault is empty (or everything is private)! Add a public memory to print the newspaper."}
+        if not memories: return {"memory": None, "article": "Your vault is empty (or private)! Add a public memory to print."}
             
         today_seed = datetime.now().date().toordinal()
         random.seed(today_seed)
@@ -277,16 +303,8 @@ async def get_daily_chronicle():
             model="openai/gpt-oss-120b",
             temperature=0.7,
         )
-        
-        article_text = completion.choices[0].message.content
-        
-        return {
-            "memory": selected_memory,
-            "article": article_text
-        }
-        
+        return {"memory": selected_memory, "article": completion.choices[0].message.content}
     except Exception as e:
-        print("Chronicle Error:", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 class PookieMessage(BaseModel):
@@ -295,18 +313,11 @@ class PookieMessage(BaseModel):
 
 @app.post("/api/pookie/chat")
 async def pookie_chat(req: PookieMessage):
-    if not supabase or not groq_client:
-        raise HTTPException(status_code=500, detail="Services not configured.")
-        
+    if not supabase or not groq_client: raise HTTPException(status_code=500, detail="Services not configured.")
     try:
-        # Fetch ONLY public memories for context
-        resp = supabase.table("memories").select(
-            "title, description, memory_date, memory_media(file_url)"
-        ).eq("is_private", False).execute()
-        
+        resp = supabase.table("memories").select("title, description, memory_date, memory_media(file_url)").eq("is_private", False).execute()
         memories = resp.data
-        context_text = "Here is the couple's relationship memory vault:\n\n"
-        
+        context_text = "Vault Context:\n"
         for m in memories:
             urls = [media['file_url'] for media in m.get('memory_media', [])]
             url_str = ", ".join(urls) if urls else "No photos"
@@ -316,11 +327,10 @@ async def pookie_chat(req: PookieMessage):
         You are 'Pookie', an extremely smart, witty, and deeply affectionate AI concierge and elite date planner for this specific couple. 
         
         Your Capabilities:
-        1. You know their public relationship history based on the Vault Context below. (Private memories are hidden from you).
-        2. You can suggest incredibly personalized date ideas, build itineraries, and recommend cafes/places.
+        1. You know their public relationship history based on the Vault Context below.
+        2. You are a Master Date Planner. You can build detailed itineraries, recommend locations, activities, and food ideas.
         3. IF THEY ASK TO SEE A PHOTO of a past memory, you MUST find the exact photo URL from the Vault Context and include it in your reply as a raw text link (e.g., https://...).
         
-        Vault Context:
         {context_text}
         
         Respond naturally, be helpful, use emojis, and act as their biggest cheerleader!
@@ -330,7 +340,6 @@ async def pookie_chat(req: PookieMessage):
         for msg in req.history:
             role = "user" if msg["sender"] == "user" else "assistant"
             messages.append({"role": role, "content": msg["text"]})
-            
         messages.append({"role": "user", "content": req.message})
 
         completion = groq_client.chat.completions.create(
@@ -339,10 +348,6 @@ async def pookie_chat(req: PookieMessage):
             temperature=0.7,
             max_tokens=800
         )
-        
-        reply_text = completion.choices[0].message.content
-        return {"reply": reply_text}
-        
+        return {"reply": completion.choices[0].message.content}
     except Exception as e:
-        print("Pookie Error:", e)
-        raise HTTPException(status_code=500, detail=str(e)) 
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,0 +1,21 @@
+{
+"short_name": "Us Space",
+"name": "The Us Space",
+"description": "Our private couple's vault and date planner.",
+"start_url": ".",
+"display": "standalone",
+"theme_color": "#faf9f8",
+"background_color": "#faf9f8",
+"icons": [
+{
+"src": "data:image/svg+xml,🌸",
+"sizes": "192x192",
+"type": "image/svg+xml"
+},
+{
+"src": "data:image/svg+xml,🌸",
+"sizes": "512x512",
+"type": "image/svg+xml"
+}
+]
+}
