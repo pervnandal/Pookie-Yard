@@ -103,6 +103,39 @@ const Icons = {
   )
 };
 
+// --- SMART MEDIA PARSER ---
+// Intelligently parses Google Drive, YouTube, and legacy Supabase URLs
+const parseMediaUrl = (rawUrl) => {
+  try {
+    const data = JSON.parse(rawUrl);
+    let thumb = data.thumb || data.url || rawUrl;
+    if (data.provider === 'youtube') thumb = `https://img.youtube.com/vi/${data.id}/maxresdefault.jpg`;
+    
+    return {
+      provider: data.provider || 'unknown',
+      id: data.id,
+      thumb: thumb,
+      original: data.original || data.url || rawUrl,
+      isYoutube: data.provider === 'youtube',
+      isDrive: data.provider === 'drive',
+      isVoice: false
+    };
+  } catch {
+    // Legacy Supabase URLs support (doesn't break old images)
+    const isVoice = rawUrl.includes('voice_note');
+    const isVideo = /\.(mp4|webm|mov|ogg)$/i.test(rawUrl.split('?')[0]);
+    return {
+      provider: 'supabase',
+      thumb: rawUrl,
+      original: rawUrl,
+      isYoutube: false,
+      isDrive: false,
+      isLegacyVideo: isVideo,
+      isVoice: isVoice
+    };
+  }
+};
+
 const uploadFilesWithProgress = (url, formData, setProgress, onSuccess, onError) => {
   const xhr = new XMLHttpRequest();
   xhr.open('POST', url, true);
@@ -291,15 +324,8 @@ const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
 };
 
 const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
-  const coverImage = memory.memory_media && memory.memory_media.length > 0 
-    ? memory.memory_media[0].file_url 
-    : 'https://images.unsplash.com/photo-1518199268815-95a17b8f6459?auto=format&fit=crop&q=80&w=800';
-
-  const isVideo = (url) => /\.(mp4|webm|mov|ogg)$/i.test(url.split('?')[0]);
-  const isAudio = (url) => /\.(webm|mp3|wav|ogg)$/i.test(url.split('?')[0]) && url.includes('voice_note');
-
-  const displayMedia = memory.memory_media?.find(m => !isAudio(m.file_url)) || memory.memory_media?.[0];
-  const actualCover = displayMedia ? displayMedia.file_url : coverImage;
+  const displayMediaRaw = memory.memory_media?.length > 0 ? memory.memory_media[0].file_url : '';
+  const mediaObj = displayMediaRaw ? parseMediaUrl(displayMediaRaw) : { thumb: 'https://images.unsplash.com/photo-1518199268815-95a17b8f6459?auto=format&fit=crop&q=80&w=800' };
 
   return (
     <div className="bg-white rounded-2xl overflow-hidden shadow-sm md:hover:shadow-xl transition-all duration-300 border border-stone-100 group cursor-pointer flex flex-col h-full relative"
@@ -307,11 +333,23 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
          onClick={() => onClick(memory)}
          onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
     >
-      <div className="relative h-64 overflow-hidden bg-stone-900">
-        {isVideo(actualCover) ? (
-          <video src={actualCover} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
+      <div className="relative h-64 overflow-hidden bg-stone-900 flex items-center justify-center">
+        {mediaObj.isVoice ? (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-stone-800 text-rose-400">
+               <Icons.Mic />
+               <span className="text-xs font-medium mt-2">Audio Note</span>
+            </div>
+        ) : mediaObj.isYoutube || mediaObj.isLegacyVideo ? (
+            <>
+               <img src={mediaObj.thumb} loading="lazy" className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out opacity-80" />
+               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                  <div className="w-12 h-12 bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center text-white">
+                     ▶
+                  </div>
+               </div>
+            </>
         ) : (
-          <img src={actualCover} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" />
+            <img src={mediaObj.thumb} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" />
         )}
         
         <button 
@@ -329,7 +367,6 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
         
         {memory.memory_media && memory.memory_media.length > 1 && (
           <div className="absolute bottom-4 right-4 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-xs font-medium text-white shadow-md z-20 flex items-center gap-1.5">
-            {memory.memory_media.some(m => isAudio(m.file_url)) && <Icons.Mic />}
             +{memory.memory_media.length - 1} media
           </div>
         )}
@@ -367,9 +404,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
   }, [isOpen, memory]);
 
   const mediaList = memory?.memory_media || [];
-  const activeMedia = mediaList[currentIndex];
-  const isVideo = (url) => /\.(mp4|webm|mov|ogg)$/i.test(url.split('?')[0]);
-  const isAudio = (url) => /\.(webm|mp3|wav|ogg)$/i.test(url.split('?')[0]) && url.includes('voice_note');
+  const activeMedia = mediaList[currentIndex] ? parseMediaUrl(mediaList[currentIndex].file_url) : null;
 
   const handleNext = () => { if (mediaList.length > 1) setCurrentIndex((prev) => (prev + 1) % mediaList.length); };
   const handlePrev = () => { if (mediaList.length > 1) setCurrentIndex((prev) => (prev - 1 + mediaList.length) % mediaList.length); };
@@ -392,7 +427,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, isEditingDesc, mediaList.length]);
 
-  if (!isOpen || !memory) return null;
+  if (!isOpen || !memory || !activeMedia) return null;
 
   const toggleFullscreen = async () => {
     if (!document.fullscreenElement) { if (containerRef.current.requestFullscreen) await containerRef.current.requestFullscreen(); }
@@ -444,7 +479,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
   const handleDownloadSingle = async () => {
     if (!activeMedia) return;
     try {
-      const res = await fetch(activeMedia.file_url);
+      const res = await fetch(activeMedia.original);
       const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
@@ -455,7 +490,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
       document.body.removeChild(link);
       window.URL.revokeObjectURL(url);
     } catch (err) {
-      window.open(activeMedia.file_url, '_blank');
+      window.open(activeMedia.original, '_blank');
     }
   };
 
@@ -482,15 +517,15 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
       {!isFullscreen && (
         <div className="w-80 bg-stone-950 border-r border-stone-800 flex-col hidden md:flex shrink-0 z-50">
           <div className="p-5 border-b border-stone-800 flex items-center justify-between">
-            <button onClick={onClose} className="p-2 md:hover:bg-stone-800 rounded-full transition-colors text-stone-400 hover:text-white" title="Close Gallery (Esc)"><Icons.ArrowLeft /></button>
+            <button onClick={onClose} className="p-2 md:hover:bg-white/10 rounded-full transition-colors text-stone-400 hover:text-white" title="Close Gallery (Esc)"><Icons.ArrowLeft /></button>
             <h2 className="text-lg font-serif font-bold text-stone-200">Vault Albums</h2>
             <div className="w-8"></div>
           </div>
           <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
             {memories.map((m) => {
               const isExpanded = expandedAlbumId === m.id;
-              const displayMedia = m.memory_media?.find(med => !isAudio(med.file_url)) || m.memory_media?.[0];
-              const thumb = displayMedia ? displayMedia.file_url : '';
+              const displayMediaRaw = m.memory_media?.length > 0 ? m.memory_media[0].file_url : '';
+              const parsedThumb = displayMediaRaw ? parseMediaUrl(displayMediaRaw) : null;
               
               return (
                 <div key={m.id} className="flex flex-col">
@@ -501,7 +536,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                     className={`w-full text-left p-2.5 rounded-xl flex items-center gap-3 transition-all duration-200 ${isExpanded ? 'bg-stone-800 shadow-inner' : 'md:hover:bg-stone-800/50 opacity-70 md:hover:opacity-100'}`}
                   >
                     <div className="w-12 h-12 rounded-lg bg-black shrink-0 overflow-hidden relative flex items-center justify-center">
-                      {isAudio(thumb) ? <Icons.Mic /> : isVideo(thumb) ? <video src={thumb} className="w-full h-full object-cover opacity-80" preload="metadata" /> : <img src={thumb} loading="lazy" className="w-full h-full object-cover opacity-80" />}
+                      {parsedThumb?.isVoice ? <Icons.Mic /> : <img src={parsedThumb?.thumb} loading="lazy" className="w-full h-full object-cover opacity-80" />}
                     </div>
                     <div className="flex-1 min-w-0 flex items-center justify-between">
                       <div>
@@ -513,12 +548,15 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                   </button>
                   {isExpanded && (
                     <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 pt-2 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
-                      {m.memory_media?.map((media, idx) => (
-                        <button key={media.id} onClick={(e) => { e.stopPropagation(); if(m.id !== memory.id) onSelectMemory(m); setCurrentIndex(idx); }}
-                          className={`relative aspect-square rounded-md overflow-hidden bg-black transition-all flex items-center justify-center ${m.id === memory.id && currentIndex === idx ? 'ring-2 ring-rose-500 scale-105 z-10' : 'opacity-60 md:hover:opacity-100'}`}>
-                          {isAudio(media.file_url) ? <Icons.Mic className="text-stone-400" /> : isVideo(media.file_url) ? <video src={media.file_url} className="w-full h-full object-cover" preload="metadata" /> : <img src={media.file_url} loading="lazy" className="w-full h-full object-cover" />}
-                        </button>
-                      ))}
+                      {m.memory_media?.map((media, idx) => {
+                        const parsed = parseMediaUrl(media.file_url);
+                        return (
+                          <button key={media.id} onClick={(e) => { e.stopPropagation(); if(m.id !== memory.id) onSelectMemory(m); setCurrentIndex(idx); }}
+                            className={`relative aspect-square rounded-md overflow-hidden bg-black transition-all flex items-center justify-center ${m.id === memory.id && currentIndex === idx ? 'ring-2 ring-rose-500 scale-105 z-10' : 'opacity-60 md:hover:opacity-100'}`}>
+                            {parsed.isVoice ? <Icons.Mic className="text-stone-400" /> : <img src={parsed.thumb} loading="lazy" className="w-full h-full object-cover" />}
+                          </button>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -529,8 +567,8 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
       )}
 
       <div ref={containerRef} className="flex-1 relative flex flex-col overflow-hidden bg-stone-950 group">
-        <div className={`absolute top-0 inset-x-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent z-50 transition-opacity ${isFullscreen ? 'opacity-0 md:hover:opacity-100' : 'opacity-100'}`}>
-           <div className="flex items-center gap-3 md:hidden">
+        <div className={`absolute top-0 inset-x-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent z-50 transition-opacity pointer-events-none ${isFullscreen ? 'opacity-0 md:hover:opacity-100' : 'opacity-100'}`}>
+           <div className="flex items-center gap-3 md:hidden pointer-events-auto">
               <button onClick={onClose} className="p-2 bg-stone-800 md:hover:bg-stone-700 rounded-full transition-colors"><Icons.ArrowLeft /></button>
               <div className="font-serif font-bold truncate text-sm flex items-center gap-2">
                 {memory.is_private && <span className="text-rose-400"><Icons.Lock /></span>}
@@ -538,31 +576,34 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
               </div>
            </div>
            <div className="hidden md:block"></div>
-           <button onClick={toggleFullscreen} className="p-3 bg-stone-800 md:hover:bg-stone-700 text-white rounded-full transition-all z-50" title="Toggle Fullscreen (F)">
+           <button onClick={toggleFullscreen} className="p-3 bg-stone-800 md:hover:bg-stone-700 text-white rounded-full transition-all z-50 pointer-events-auto" title="Toggle Fullscreen (F)">
               {isFullscreen ? <Icons.Minimize /> : <Icons.Maximize />}
            </button>
         </div>
 
-        <div className="flex-1 relative flex items-center justify-center p-4 md:p-12 min-h-0">
+        <div className="flex-1 relative flex items-center justify-center p-4 md:p-12 min-h-0 z-0">
           {mediaList.length > 0 ? (
             <>
-              {isAudio(activeMedia.file_url) ? (
+              {activeMedia.isVoice ? (
                 <div className="w-full max-w-md bg-stone-900 p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 border border-stone-800">
                    <div className="w-24 h-24 bg-rose-500/20 rounded-full flex items-center justify-center text-rose-400 animate-pulse">
                       <Icons.Mic />
                    </div>
                    <h3 className="font-serif font-bold text-xl text-stone-200">Voice Note</h3>
-                   <audio src={activeMedia.file_url} controls className="w-full outline-none" autoPlay />
+                   <audio src={activeMedia.original} controls className="w-full outline-none" autoPlay />
                 </div>
-              ) : isVideo(activeMedia.file_url) ? (
-                <video src={activeMedia.file_url} controls autoPlay className="w-full h-full object-contain shadow-2xl rounded-sm" />
+              ) : activeMedia.isYoutube ? (
+                <iframe src={`https://www.youtube.com/embed/${activeMedia.id}?rel=0&autoplay=1`} className="w-full h-full max-w-5xl rounded-lg shadow-2xl z-10 relative" allow="autoplay; fullscreen" />
+              ) : activeMedia.isLegacyVideo ? (
+                <video src={activeMedia.original} controls autoPlay className="w-full h-full object-contain rounded-sm z-10 relative" />
               ) : (
-                <img src={activeMedia.file_url} alt="Memory Viewer" className="w-full h-full object-contain shadow-2xl transition-transform duration-300" />
+                <img src={activeMedia.original} alt="Memory Viewer" className="w-full h-full object-contain z-10 relative" />
               )}
+              
               {mediaList.length > 1 && (
                 <>
-                  <button onClick={(e) => { e.stopPropagation(); handlePrev(); }} className="absolute left-6 top-1/2 -translate-y-1/2 p-4 bg-stone-800/80 md:hover:bg-stone-700 text-white rounded-full transition-all opacity-0 md:group-hover:opacity-100 z-50 focus:outline-none"><Icons.Left /></button>
-                  <button onClick={(e) => { e.stopPropagation(); handleNext(); }} className="absolute right-6 top-1/2 -translate-y-1/2 p-4 bg-stone-800/80 md:hover:bg-stone-700 text-white rounded-full transition-all opacity-0 md:group-hover:opacity-100 z-50 focus:outline-none"><Icons.Right /></button>
+                  <button onClick={(e) => { e.stopPropagation(); handlePrev(); }} className="absolute left-6 top-1/2 -translate-y-1/2 p-4 bg-stone-800/80 md:hover:bg-stone-700 text-white rounded-full transition-all opacity-0 md:group-hover:opacity-100 z-50 focus:outline-none pointer-events-auto"><Icons.Left /></button>
+                  <button onClick={(e) => { e.stopPropagation(); handleNext(); }} className="absolute right-6 top-1/2 -translate-y-1/2 p-4 bg-stone-800/80 md:hover:bg-stone-700 text-white rounded-full transition-all opacity-0 md:group-hover:opacity-100 z-50 focus:outline-none pointer-events-auto"><Icons.Right /></button>
                 </>
               )}
             </>
@@ -571,8 +612,8 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
           )}
         </div>
 
-        <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 z-50 transition-opacity flex flex-col md:flex-row items-end justify-between gap-4 ${isFullscreen ? 'opacity-0 md:hover:opacity-100' : 'opacity-100'}`}>
-            <div className="max-w-xl w-full">
+        <div className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/90 via-black/50 to-transparent p-6 z-50 transition-opacity flex flex-col md:flex-row items-end justify-between gap-4 pointer-events-none ${isFullscreen ? 'opacity-0 md:hover:opacity-100' : 'opacity-100'}`}>
+            <div className="max-w-xl w-full pointer-events-auto">
                {!isFullscreen && (
                  <>
                    <h2 className="text-2xl font-serif font-bold text-white mb-1 drop-shadow-md flex items-center gap-2">
@@ -615,7 +656,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                )}
             </div>
 
-            <div className="flex flex-wrap items-center gap-3 shrink-0 justify-end z-[60]">
+            <div className="flex flex-wrap items-center gap-3 shrink-0 justify-end z-[60] pointer-events-auto">
                <div className="relative group cursor-pointer">
                  <input type="file" multiple accept="image/*,video/*,audio/*" onChange={handleAddMedia} disabled={isUploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20 disabled:cursor-not-allowed" />
                  <button disabled={isUploading} className="px-5 py-2.5 bg-stone-800 md:hover:bg-stone-700 rounded-full text-sm font-medium transition-colors flex items-center gap-2 relative overflow-hidden pointer-events-none">
@@ -891,18 +932,21 @@ const ChronicleView = ({ showDialog, onOpenMemory }) => {
     const mediaList = chronicle.memory.memory_media || [];
     const text = chronicle.article || "";
     
-    const visualMedia = mediaList.filter(m => !m.file_url.includes('voice_note'));
-    const img1 = visualMedia.length > 0 ? visualMedia[0] : null;
-    const img2 = visualMedia.length > 1 ? visualMedia[1] : null;
+    const visualMedia = mediaList.filter(m => {
+       const parsed = parseMediaUrl(m.file_url);
+       return !parsed.isVoice;
+    });
+    const img1 = visualMedia.length > 0 ? parseMediaUrl(visualMedia[0].file_url) : null;
+    const img2 = visualMedia.length > 1 ? parseMediaUrl(visualMedia[1].file_url) : null;
 
-    const renderMedia = (m, rotateClass) => {
-      if (!m) return null;
+    const renderMedia = (parsed, rotateClass) => {
+      if (!parsed) return null;
       return (
         <div className={`bg-white p-3 shadow-md ${rotateClass} transition-transform duration-500 ease-out border border-stone-200 relative group cursor-pointer block w-full mb-6`} onClick={() => onOpenMemory(chronicle.memory)} title="Click to view full album">
-          {/\.(mp4|webm|mov|ogg)$/i.test(m.file_url) ? (
-            <video src={m.file_url} className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" autoPlay muted loop playsInline />
+          {parsed.isYoutube ? (
+            <img src={parsed.thumb} className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
           ) : (
-            <img src={m.file_url} loading="lazy" className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
+            <img src={parsed.thumb} loading="lazy" className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
           )}
           <p className="text-center text-xs italic mt-3 text-stone-500 font-sans">Archived on {new Date(chronicle.memory.memory_date).toLocaleDateString()}</p>
           <div className="absolute inset-0 bg-stone-900/0 md:group-hover:bg-stone-900/10 transition-all duration-300 flex items-center justify-center opacity-0 md:group-hover:opacity-100 z-10">
@@ -1021,6 +1065,13 @@ const DatePlanner = ({ showDialog }) => {
   const typingTimeoutRef = useRef(null);
   const padTypingTimeoutRef = useRef(null);
 
+  // --- THE SAFE SEND FUNCTION ---
+  const safeSend = (payload) => {
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify(payload));
+    }
+  };
+
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/chats`)
       .then(res => res.json())
@@ -1046,7 +1097,6 @@ const DatePlanner = ({ showDialog }) => {
     }
   }, [activeDocId]);
 
-  /* MOBILE BUG FIX: Auto-reconnect WebSockets to prevent silent connection crashes */
   useEffect(() => {
     let reconnectTimer;
     const connectWS = () => {
@@ -1091,14 +1141,6 @@ const DatePlanner = ({ showDialog }) => {
     return () => { clearTimeout(reconnectTimer); if (ws.current) ws.current.close(); };
   }, [userId, activeDocId]);
 
-  /* MOBILE BUG FIX: Safe WebSocket Sender */
-  const safeSend = (msgObj) => {
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify(msgObj));
-    }
-  };
-
-  /* DESKTOP/MOBILE SCROLL FIX: Strictly scroll the chat container without moving the parent window */
   useEffect(() => {
     if (chatContainerRef.current) {
       chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight;
@@ -1252,7 +1294,7 @@ const DatePlanner = ({ showDialog }) => {
 
   return (
     <div className="flex-1 flex flex-col md:flex-row gap-6 w-full h-full">
-      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-[calc(100vh-6rem)] shrink-0">
+      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-full shrink-0">
         <div className="bg-stone-50 border-b border-stone-100 p-5 shrink-0 flex items-center justify-between">
            <div>
              <h3 className="font-serif font-bold text-lg text-stone-800">Live Planner</h3>
@@ -1323,7 +1365,7 @@ const DatePlanner = ({ showDialog }) => {
         </form>
       </div>
 
-      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[600px] md:h-[calc(100vh-6rem)] shrink-0">
+      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[600px] md:h-full shrink-0">
          <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0 h-40 md:h-full">
             <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50 shrink-0">
                <span className="font-bold text-stone-700 font-sans text-sm tracking-wide uppercase">Plans</span>
@@ -1443,7 +1485,10 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
 
     return parts.map((part, index) => {
       if (urlRegex.test(part)) {
-        const matchingMemory = memories?.find(m => m.memory_media?.some(med => med.file_url === part));
+        const matchingMemory = memories?.find(m => m.memory_media?.some(med => {
+            const parsed = parseMediaUrl(med.file_url);
+            return parsed.original === part || parsed.thumb === part || med.file_url === part;
+        }));
         return (
           <div key={index} className="mt-3 space-y-2">
             <div className="rounded-xl overflow-hidden shadow-md bg-black max-h-56">
@@ -1462,8 +1507,8 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
   };
 
   return (
-    <div className="fixed bottom-6 right-6 z-[90] flex flex-col items-end">
-      <div className={`mb-4 w-[90vw] sm:w-[380px] bg-white rounded-3xl shadow-2xl border border-stone-100 overflow-hidden transition-all duration-300 transform origin-bottom-right ${isOpen ? 'scale-100 opacity-100' : 'scale-0 opacity-0 pointer-events-none'}`}>
+    <div className="fixed bottom-6 right-6 z-[90] flex flex-col items-end pointer-events-none">
+      <div className={`mb-4 w-[90vw] sm:w-[380px] bg-white rounded-3xl shadow-2xl border border-stone-100 overflow-hidden transition-all duration-300 transform origin-bottom-right ${isOpen ? 'scale-100 opacity-100 pointer-events-auto' : 'scale-0 opacity-0 pointer-events-none'}`}>
         <div className="bg-rose-500 p-4 flex items-center justify-between text-white shrink-0">
           <div className="flex items-center gap-2">
             <span className="text-2xl bg-white/20 p-1.5 rounded-full leading-none">🎀</span>
@@ -1472,7 +1517,7 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
               <p className="text-[10px] text-rose-100 font-medium tracking-wide uppercase">AI Concierge & Planner</p>
             </div>
           </div>
-          <button onClick={() => setIsOpen(false)} className="text-rose-100 md:hover:text-white transition-colors bg-rose-600/50 md:hover:bg-rose-600 p-1.5 rounded-full"><Icons.X /></button>
+          <button onClick={() => setIsOpen(false)} className="text-rose-100 hover:text-white transition-colors bg-rose-600/50 hover:bg-rose-600 p-1.5 rounded-full"><Icons.X /></button>
         </div>
 
         <div ref={pookieChatRef} className="h-[380px] p-4 overflow-y-auto bg-stone-50 flex flex-col gap-3 custom-scrollbar">
@@ -1496,11 +1541,11 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
 
         <form onSubmit={handleSend} className="p-3 bg-white border-t border-stone-100 flex gap-2 shrink-0">
           <input type="text" value={input} onChange={(e) => setInput(e.target.value)} disabled={isTyping} placeholder="Ask Pookie anything..." className="flex-1 bg-stone-100 border border-stone-200 rounded-full px-4 py-2 text-sm focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400" />
-          <button type="submit" disabled={!input.trim() || isTyping} className="p-2 bg-rose-500 md:hover:bg-rose-600 disabled:bg-rose-300 text-white rounded-full flex items-center justify-center shadow-sm w-10 h-10 shrink-0"><Icons.Send /></button>
+          <button type="submit" disabled={!input.trim() || isTyping} className="p-2 bg-rose-500 hover:bg-rose-600 disabled:bg-rose-300 text-white rounded-full flex items-center justify-center shadow-sm w-10 h-10 shrink-0"><Icons.Send /></button>
         </form>
       </div>
 
-      <button onClick={() => setIsOpen(!isOpen)} className="bg-stone-900 md:hover:bg-stone-800 text-white p-4 rounded-full shadow-2xl transition-transform md:hover:scale-110 flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-stone-200">
+      <button onClick={() => setIsOpen(!isOpen)} className="pointer-events-auto bg-stone-900 hover:bg-stone-800 text-white p-4 rounded-full shadow-2xl transition-transform hover:scale-110 flex items-center justify-center focus:outline-none focus:ring-4 focus:ring-stone-200">
         {isOpen ? <Icons.X /> : <span className="flex items-center gap-2"><Icons.MessageCircle /> <span className="font-bold font-sans text-sm pr-1">Pookie</span></span>}
       </button>
     </div>
@@ -1601,11 +1646,10 @@ export default function App() {
 
   return (
     <div className="min-h-screen w-full bg-[#faf9f8] font-sans selection:bg-rose-200 selection:text-rose-900 flex flex-col relative">
-      {/* MOBILE BUG FIX: Overlays pushed strictly to z-[-1] so they can NEVER intercept touches on mobile devices. */}
-      <div className="fixed top-[-10%] left-[-10%] rounded-full mix-blend-multiply opacity-60 pointer-events-none z-[-1]" style={{ backgroundColor: '#fecdd3', width: '500px', height: '500px', filter: 'blur(100px)' }}></div>
-      <div className="fixed top-[20%] right-[-10%] rounded-full mix-blend-multiply opacity-60 pointer-events-none z-[-1]" style={{ backgroundColor: '#ffedd5', width: '400px', height: '400px', filter: 'blur(100px)' }}></div>
-      <div className="fixed bottom-[-10%] left-[20%] rounded-full mix-blend-multiply opacity-50 pointer-events-none z-[-1]" style={{ backgroundColor: '#fbcfe8', width: '600px', height: '600px', filter: 'blur(120px)' }}></div>
-      <div className="fixed inset-0 pointer-events-none z-[-1]" style={{ opacity: 0.4, backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(0,0,0,0.08) 1px, transparent 0)', backgroundSize: '32px 32px' }}></div>
+      <div className="fixed top-[-10%] left-[-10%] rounded-full mix-blend-multiply opacity-60 z-[-1] pointer-events-none" style={{ backgroundColor: '#fecdd3', width: '500px', height: '500px', filter: 'blur(100px)' }}></div>
+      <div className="fixed top-[20%] right-[-10%] rounded-full mix-blend-multiply opacity-60 z-[-1] pointer-events-none" style={{ backgroundColor: '#ffedd5', width: '400px', height: '400px', filter: 'blur(100px)' }}></div>
+      <div className="fixed bottom-[-10%] left-[20%] rounded-full mix-blend-multiply opacity-50 z-[-1] pointer-events-none" style={{ backgroundColor: '#fbcfe8', width: '600px', height: '600px', filter: 'blur(120px)' }}></div>
+      <div className="fixed inset-0 z-[-1] pointer-events-none" style={{ opacity: 0.4, backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(0,0,0,0.08) 1px, transparent 0)', backgroundSize: '32px 32px' }}></div>
 
       <Header onAddClick={() => setIsAddModalOpen(true)} activeTab={activeTab} setActiveTab={setActiveTab} onLogout={() => { localStorage.removeItem('us_auth'); setIsAuthenticated(false); }} />
       
@@ -1661,7 +1705,7 @@ export default function App() {
         )}
 
         {activeTab === 'planner' && (
-           <div className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8 flex flex-col h-auto md:h-[calc(100vh-6rem)] min-h-[600px] gap-6 pb-32 md:pb-8">
+           <div className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8 flex flex-col h-auto md:h-[calc(100vh-6rem)] gap-6 pb-32 md:pb-8">
               <DatePlanner showDialog={showDialog} />
            </div>
         )}

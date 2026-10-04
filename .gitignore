@@ -1,4 +1,12 @@
+# Credentials & Secrets
 .env
+.env.*
 .venv
-*.md
+drive_account_*.json
+youtube_client_*.json
+youtube_token_*.pickle
+*.pickle
+*.json.secret
+
 __pycache__/
+*.md 
