@@ -4,6 +4,7 @@ import random
 import io
 import zipfile
 import urllib.request
+import asyncio
 from datetime import datetime
 from typing import List, Optional
 
@@ -34,8 +35,9 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+# OPTIMIZATION: standard 'def' automatically runs in FastAPI's background threadpool
 @app.post("/api/login")
-async def login(req: LoginRequest):
+def login(req: LoginRequest):
     if req.username == APP_USERNAME and req.password == APP_PASSWORD:
         return {"success": True}
     raise HTTPException(status_code=401, detail="Invalid credentials. Nice try!")
@@ -68,6 +70,19 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+# OPTIMIZATION: Thread-safe DB insertion
+def save_chat_to_db(parsed_data):
+    if supabase:
+        try:
+            supabase.table("chat_messages").insert({
+                "sender_id": parsed_data.get("senderId", ""),
+                "text": parsed_data.get("text", ""),
+                "audio": parsed_data.get("audio", ""),
+                "timestamp": parsed_data.get("timestamp", "")
+            }).execute()
+        except Exception as e:
+            print("Failed to save chat:", e)
+
 @app.websocket("/ws/chat")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -75,23 +90,19 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             data = await websocket.receive_text()
             parsed_data = json.loads(data)
-            if parsed_data.get("type") == "chat" and supabase:
-                try:
-                    supabase.table("chat_messages").insert({
-                        "sender_id": parsed_data.get("senderId", ""),
-                        "text": parsed_data.get("text", ""),
-                        "audio": parsed_data.get("audio", ""),
-                        "timestamp": parsed_data.get("timestamp", "")
-                    }).execute()
-                except Exception as e:
-                    print("Failed to save chat:", e)
+            
+            if parsed_data.get("type") == "chat":
+                # OPTIMIZATION: Fire-and-forget background task. 
+                # This ensures the chat broadcasts instantly without waiting for the DB to save.
+                asyncio.create_task(asyncio.to_thread(save_chat_to_db, parsed_data))
                     
             await manager.broadcast(data)
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+# OPTIMIZATION: Removed 'async' so Supabase's synchronous requests don't block the event loop
 @app.get("/api/chats")
-async def get_chats():
+def get_chats():
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         resp = supabase.table("chat_messages").select("*").order("created_at", desc=False).execute()
@@ -100,7 +111,7 @@ async def get_chats():
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/itineraries")
-async def get_itineraries():
+def get_itineraries():
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         resp = supabase.table("itineraries").select("*").order("updated_at", desc=True).execute()
@@ -112,7 +123,7 @@ class ItineraryCreate(BaseModel):
     title: str
 
 @app.post("/api/itineraries")
-async def create_itinerary(req: ItineraryCreate):
+def create_itinerary(req: ItineraryCreate):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         resp = supabase.table("itineraries").insert({"title": req.title, "content": ""}).execute()
@@ -125,7 +136,7 @@ class ItineraryUpdate(BaseModel):
     title: Optional[str] = None
 
 @app.put("/api/itineraries/{doc_id}")
-async def update_itinerary(doc_id: int, req: ItineraryUpdate):
+def update_itinerary(doc_id: int, req: ItineraryUpdate):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         update_data = {"updated_at": datetime.now().isoformat()}
@@ -140,7 +151,7 @@ async def update_itinerary(doc_id: int, req: ItineraryUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/itineraries/{doc_id}")
-async def delete_itinerary(doc_id: int):
+def delete_itinerary(doc_id: int):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("itineraries").delete().eq("id", doc_id).execute()
@@ -149,16 +160,22 @@ async def delete_itinerary(doc_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/memories")
-async def get_memories():
+def get_memories(limit: int = 50, offset: int = 0):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         response = supabase.table("memories").select(
             "id, memory_date, title, description, is_private, created_at, memory_media(id, file_url, created_at)"
-        ).order("memory_date", desc=True).execute()
+        ).order("memory_date", desc=True).range(offset, offset + limit - 1).execute()
         return response.data
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+# OPTIMIZATION: Thread-safe media uploader helper
+def upload_media_sync(memory_id, file_name, file_bytes, content_type):
+    supabase.storage.from_("memory_images").upload(file_name, file_bytes, {"content-type": content_type})
+    file_url = supabase.storage.from_("memory_images").get_public_url(file_name)
+    supabase.table("memory_media").insert({"memory_id": memory_id, "file_url": file_url}).execute()
 
 @app.post("/api/memories")
 async def create_memory(
@@ -172,25 +189,26 @@ async def create_memory(
         raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         is_priv_bool = is_private.lower() == 'true'
-        mem_resp = supabase.table("memories").insert({
-            "memory_date": date,
-            "title": title,
-            "description": description,
-            "is_private": is_priv_bool
-        }).execute()
         
+        # Offload DB insert to thread
+        def insert_mem():
+            return supabase.table("memories").insert({
+                "memory_date": date,
+                "title": title,
+                "description": description,
+                "is_private": is_priv_bool
+            }).execute()
+            
+        mem_resp = await asyncio.to_thread(insert_mem)
         memory_id = mem_resp.data[0]['id']
 
         for file in files:
             file_ext = file.filename.split(".")[-1]
             file_name = f"memory_{memory_id}_{datetime.now().timestamp()}.{file_ext}"
-            file_bytes = await file.read()
+            file_bytes = await file.read() # Async read to prevent memory blocking
             
-            supabase.storage.from_("memory_images").upload(
-                file_name, file_bytes, {"content-type": file.content_type}
-            )
-            file_url = supabase.storage.from_("memory_images").get_public_url(file_name)
-            supabase.table("memory_media").insert({"memory_id": memory_id, "file_url": file_url}).execute()
+            # Offload heavy synchronous upload to background thread
+            await asyncio.to_thread(upload_media_sync, memory_id, file_name, file_bytes, file.content_type)
 
         return {"message": "Memory created successfully!", "memory_id": memory_id}
     except Exception as e:
@@ -200,7 +218,7 @@ class MemoryUpdate(BaseModel):
     description: str
 
 @app.put("/api/memories/{memory_id}")
-async def update_memory(memory_id: int, memory_update: MemoryUpdate):
+def update_memory(memory_id: int, memory_update: MemoryUpdate):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("memories").update({"description": memory_update.description}).eq("id", memory_id).execute()
@@ -209,7 +227,7 @@ async def update_memory(memory_id: int, memory_update: MemoryUpdate):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/memories/{memory_id}")
-async def delete_memory(memory_id: int):
+def delete_memory(memory_id: int):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("memories").delete().eq("id", memory_id).execute()
@@ -225,16 +243,13 @@ async def add_media_to_memory(memory_id: int, files: List[UploadFile] = File(...
             file_ext = file.filename.split(".")[-1]
             file_name = f"memory_{memory_id}_{datetime.now().timestamp()}.{file_ext}"
             file_bytes = await file.read()
-            
-            supabase.storage.from_("memory_images").upload(file_name, file_bytes, {"content-type": file.content_type})
-            file_url = supabase.storage.from_("memory_images").get_public_url(file_name)
-            supabase.table("memory_media").insert({"memory_id": memory_id, "file_url": file_url}).execute()
+            await asyncio.to_thread(upload_media_sync, memory_id, file_name, file_bytes, file.content_type)
         return {"message": "Media added successfully!"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.delete("/api/media/{media_id}")
-async def delete_media(media_id: int):
+def delete_media(media_id: int):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected.")
     try:
         supabase.table("memory_media").delete().eq("id", media_id).execute()
@@ -243,7 +258,7 @@ async def delete_media(media_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/memories/{memory_id}/download")
-async def download_album(memory_id: int):
+def download_album(memory_id: int):
     if not supabase: raise HTTPException(status_code=500, detail="Database not connected")
     try:
         media_resp = supabase.table("memory_media").select("file_url").eq("memory_id", memory_id).execute()
@@ -272,7 +287,7 @@ async def download_album(memory_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/chronicle")
-async def get_daily_chronicle():
+def get_daily_chronicle():
     if not supabase or not groq_client: raise HTTPException(status_code=500, detail="Services not configured.")
     try:
         resp = supabase.table("memories").select("id, title, description, memory_date, memory_media(file_url)").eq("is_private", False).execute()
@@ -312,7 +327,7 @@ class PookieMessage(BaseModel):
     history: List[dict]
 
 @app.post("/api/pookie/chat")
-async def pookie_chat(req: PookieMessage):
+def pookie_chat(req: PookieMessage):
     if not supabase or not groq_client: raise HTTPException(status_code=500, detail="Services not configured.")
     try:
         resp = supabase.table("memories").select("title, description, memory_date, memory_media(file_url)").eq("is_private", False).execute()

@@ -1,5 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 
+// Dynamic API URLs based on environment (Local vs Production)
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+
 const Icons = {
   Trash: () => (
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -168,7 +172,7 @@ const LoginScreen = ({ onLogin, showDialog }) => {
     e.preventDefault();
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/login', {
+      const response = await fetch(`${API_BASE_URL}/api/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password })
@@ -303,16 +307,11 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
          onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
     >
       <div className="relative h-64 overflow-hidden bg-stone-900" onClick={() => onClick(memory)}>
+        {/* OPTIMIZATION: Clean, high-performance object-cover without heavy CSS blurring filters */}
         {isVideo(actualCover) ? (
-          <video src={actualCover} className="absolute inset-0 w-full h-full object-cover opacity-40 blur-xl scale-125" muted loop playsInline />
+          <video src={actualCover} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
         ) : (
-          <img src={actualCover} className="absolute inset-0 w-full h-full object-cover opacity-40 blur-xl scale-125" />
-        )}
-        
-        {isVideo(actualCover) ? (
-          <video src={actualCover} className="relative z-10 w-full h-full object-contain transform group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
-        ) : (
-          <img src={actualCover} alt={memory.title} className="relative z-10 w-full h-full object-contain transform group-hover:scale-105 transition-transform duration-700 ease-in-out" />
+          <img src={actualCover} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" />
         )}
         
         <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold text-stone-700 shadow-sm z-20 flex items-center gap-1.5">
@@ -391,7 +390,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isEditingDesc, mediaList.length]);
+  }, [isOpen, isEditingDesc, mediaList.length, handleNext, handlePrev]);
 
   if (!isOpen || !memory) return null;
 
@@ -409,7 +408,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     files.forEach(file => formData.append('files', file));
 
     uploadFilesWithProgress(
-      `http://localhost:8000/api/memories/${memory.id}/media`,
+      `${API_BASE_URL}/api/memories/${memory.id}/media`,
       formData,
       (percent) => setUploadProgress(percent),
       (response) => { setIsUploading(false); onMemoryUpdated(); },
@@ -425,7 +424,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
       message: 'Are you sure you want to permanently delete this file?',
       onConfirm: async () => {
         try {
-          const response = await fetch(`http://localhost:8000/api/media/${activeMedia.id}`, { method: 'DELETE' });
+          const response = await fetch(`${API_BASE_URL}/api/media/${activeMedia.id}`, { method: 'DELETE' });
           if (response.ok) {
             onMemoryUpdated(); 
             if (currentIndex >= mediaList.length - 1) setCurrentIndex(Math.max(0, mediaList.length - 2));
@@ -440,7 +439,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     });
   };
 
-  const handleDownloadAlbum = () => { window.location.href = `http://localhost:8000/api/memories/${memory.id}/download`; };
+  const handleDownloadAlbum = () => { window.location.href = `${API_BASE_URL}/api/memories/${memory.id}/download`; };
 
   const handleDownloadSingle = async () => {
     if (!activeMedia) return;
@@ -462,7 +461,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
 
   const handleSaveDesc = async () => {
     try {
-      const res = await fetch(`http://localhost:8000/api/memories/${memory.id}`, {
+      const res = await fetch(`${API_BASE_URL}/api/memories/${memory.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: descText })
@@ -481,8 +480,8 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
   return (
     <div className="fixed inset-0 z-[100] flex bg-stone-950 text-white animate-in fade-in duration-300">
       {!isFullscreen && (
-        <div className="w-80 bg-stone-900/80 backdrop-blur-xl border-r border-white/10 flex-col hidden md:flex shrink-0 shadow-2xl z-50">
-          <div className="p-5 border-b border-white/10 flex items-center justify-between">
+        <div className="w-80 bg-stone-950 border-r border-stone-800 flex-col hidden md:flex shrink-0 z-50">
+          <div className="p-5 border-b border-stone-800 flex items-center justify-between">
             <button onClick={onClose} className="p-2 hover:bg-white/10 rounded-full transition-colors text-stone-400 hover:text-white" title="Close Gallery (Esc)"><Icons.ArrowLeft /></button>
             <h2 className="text-lg font-serif font-bold text-stone-200">Vault Albums</h2>
             <div className="w-8"></div>
@@ -499,10 +498,10 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                       if (isExpanded) setExpandedAlbumId(null);
                       else { setExpandedAlbumId(m.id); if (m.id !== memory.id) { setCurrentIndex(0); onSelectMemory(m); } }
                     }}
-                    className={`w-full text-left p-2.5 rounded-xl flex items-center gap-3 transition-all duration-200 ${isExpanded ? 'bg-white/10 shadow-inner' : 'hover:bg-white/5 opacity-70 hover:opacity-100'}`}
+                    className={`w-full text-left p-2.5 rounded-xl flex items-center gap-3 transition-all duration-200 ${isExpanded ? 'bg-stone-800 shadow-inner' : 'hover:bg-stone-800/50 opacity-70 hover:opacity-100'}`}
                   >
                     <div className="w-12 h-12 rounded-lg bg-black shrink-0 overflow-hidden relative flex items-center justify-center">
-                      {isAudio(thumb) ? <Icons.Mic /> : isVideo(thumb) ? <video src={thumb} className="w-full h-full object-cover opacity-80" /> : <img src={thumb} className="w-full h-full object-cover opacity-80" />}
+                      {isAudio(thumb) ? <Icons.Mic /> : isVideo(thumb) ? <video src={thumb} className="w-full h-full object-cover opacity-80" preload="metadata" /> : <img src={thumb} loading="lazy" className="w-full h-full object-cover opacity-80" />}
                     </div>
                     <div className="flex-1 min-w-0 flex items-center justify-between">
                       <div>
@@ -512,16 +511,17 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                       {m.is_private && <span className="text-rose-500 opacity-80"><Icons.Lock /></span>}
                     </div>
                   </button>
-                  <div className={`transition-all duration-300 overflow-hidden ${isExpanded ? 'max-h-96 opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
-                    <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
+                  {/* OPTIMIZATION: Only render thumbnails if the album is expanded to save massive DOM/Network overhead */}
+                  {isExpanded && (
+                    <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 pt-2 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
                       {m.memory_media?.map((media, idx) => (
                         <button key={media.id} onClick={(e) => { e.stopPropagation(); if(m.id !== memory.id) onSelectMemory(m); setCurrentIndex(idx); }}
                           className={`relative aspect-square rounded-md overflow-hidden bg-black transition-all flex items-center justify-center ${m.id === memory.id && currentIndex === idx ? 'ring-2 ring-rose-500 scale-105 z-10' : 'opacity-60 hover:opacity-100'}`}>
-                          {isAudio(media.file_url) ? <Icons.Mic className="text-stone-400" /> : isVideo(media.file_url) ? <video src={media.file_url} className="w-full h-full object-cover" /> : <img src={media.file_url} className="w-full h-full object-cover" />}
+                          {isAudio(media.file_url) ? <Icons.Mic className="text-stone-400" /> : isVideo(media.file_url) ? <video src={media.file_url} className="w-full h-full object-cover" preload="metadata" /> : <img src={media.file_url} loading="lazy" className="w-full h-full object-cover" />}
                         </button>
                       ))}
                     </div>
-                  </div>
+                  )}
                 </div>
               );
             })}
@@ -532,14 +532,14 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
       <div ref={containerRef} className="flex-1 relative flex flex-col overflow-hidden bg-stone-950 group">
         <div className={`absolute top-0 inset-x-0 p-4 flex items-center justify-between bg-gradient-to-b from-black/80 to-transparent z-50 transition-opacity ${isFullscreen ? 'opacity-0 hover:opacity-100' : 'opacity-100'}`}>
            <div className="flex items-center gap-3 md:hidden">
-              <button onClick={onClose} className="p-2 bg-black/40 hover:bg-black/60 rounded-full backdrop-blur-md transition-colors"><Icons.ArrowLeft /></button>
+              <button onClick={onClose} className="p-2 bg-stone-800 hover:bg-stone-700 rounded-full transition-colors"><Icons.ArrowLeft /></button>
               <div className="font-serif font-bold truncate text-sm flex items-center gap-2">
                 {memory.is_private && <span className="text-rose-400"><Icons.Lock /></span>}
                 {memory.title}
               </div>
            </div>
            <div className="hidden md:block"></div>
-           <button onClick={toggleFullscreen} className="p-3 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-md transition-all z-50" title="Toggle Fullscreen (F)">
+           <button onClick={toggleFullscreen} className="p-3 bg-stone-800 hover:bg-stone-700 text-white rounded-full transition-all z-50" title="Toggle Fullscreen (F)">
               {isFullscreen ? <Icons.Minimize /> : <Icons.Maximize />}
            </button>
         </div>
@@ -548,7 +548,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
           {mediaList.length > 0 ? (
             <>
               {isAudio(activeMedia.file_url) ? (
-                <div className="w-full max-w-md bg-stone-900/80 backdrop-blur-xl p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 border border-white/10">
+                <div className="w-full max-w-md bg-stone-900 p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 border border-stone-800">
                    <div className="w-24 h-24 bg-rose-500/20 rounded-full flex items-center justify-center text-rose-400 animate-pulse">
                       <Icons.Mic />
                    </div>
@@ -556,14 +556,14 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                    <audio src={activeMedia.file_url} controls className="w-full outline-none" autoPlay />
                 </div>
               ) : isVideo(activeMedia.file_url) ? (
-                <video src={activeMedia.file_url} controls autoPlay className="w-full h-full object-contain shadow-2xl rounded-sm" />
+                <video src={activeMedia.file_url} controls autoPlay className="w-full h-full object-contain rounded-sm" />
               ) : (
-                <img src={activeMedia.file_url} alt="Memory Viewer" className="w-full h-full object-contain shadow-2xl transition-transform duration-300" />
+                <img src={activeMedia.file_url} alt="Memory Viewer" className="w-full h-full object-contain" />
               )}
               {mediaList.length > 1 && (
                 <>
-                  <button onClick={(e) => { e.stopPropagation(); handlePrev(); }} className="absolute left-6 top-1/2 -translate-y-1/2 p-4 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-md transition-all opacity-0 group-hover:opacity-100 z-50 focus:outline-none"><Icons.Left /></button>
-                  <button onClick={(e) => { e.stopPropagation(); handleNext(); }} className="absolute right-6 top-1/2 -translate-y-1/2 p-4 bg-black/40 hover:bg-black/60 text-white rounded-full backdrop-blur-md transition-all opacity-0 group-hover:opacity-100 z-50 focus:outline-none"><Icons.Right /></button>
+                  <button onClick={(e) => { e.stopPropagation(); handlePrev(); }} className="absolute left-6 top-1/2 -translate-y-1/2 p-4 bg-stone-800/80 hover:bg-stone-700 text-white rounded-full transition-all opacity-0 group-hover:opacity-100 z-50 focus:outline-none"><Icons.Left /></button>
+                  <button onClick={(e) => { e.stopPropagation(); handleNext(); }} className="absolute right-6 top-1/2 -translate-y-1/2 p-4 bg-stone-800/80 hover:bg-stone-700 text-white rounded-full transition-all opacity-0 group-hover:opacity-100 z-50 focus:outline-none"><Icons.Right /></button>
                 </>
               )}
             </>
@@ -583,10 +583,10 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                    
                    <div className="text-stone-300 text-sm mb-3 font-medium flex items-center gap-4 flex-wrap">
                      {memory.formattedDate}
-                     <button onClick={(e) => { e.stopPropagation(); handleDownloadAlbum(); }} className="hover:text-rose-400 transition-colors flex items-center gap-1 bg-white/10 hover:bg-white/20 px-3 py-1 rounded-full text-xs border border-white/10">
+                     <button onClick={(e) => { e.stopPropagation(); handleDownloadAlbum(); }} className="hover:text-rose-400 transition-colors flex items-center gap-1 bg-stone-800 hover:bg-stone-700 px-3 py-1 rounded-full text-xs">
                        <Icons.Download /> Zip Album
                      </button>
-                     <button onClick={() => setIsEditingDesc(!isEditingDesc)} className={`transition-colors flex items-center gap-1 px-3 py-1 rounded-full text-xs border ${isEditingDesc ? 'bg-rose-500/20 text-rose-400 border-rose-500/20' : 'bg-white/10 hover:bg-white/20 text-stone-300 border-white/10'}`}>
+                     <button onClick={() => setIsEditingDesc(!isEditingDesc)} className={`transition-colors flex items-center gap-1 px-3 py-1 rounded-full text-xs border ${isEditingDesc ? 'bg-rose-500/20 text-rose-400 border-rose-500/20' : 'bg-stone-800 hover:bg-stone-700 text-stone-300 border-transparent'}`}>
                        <Icons.Edit /> {isEditingDesc ? 'Cancel Edit' : 'Edit Story'}
                      </button>
                    </div>
@@ -595,7 +595,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                {!isFullscreen && (
                  <div className="mt-2">
                    {isEditingDesc ? (
-                     <div className="bg-black/60 backdrop-blur-md p-3 rounded-xl border border-white/20">
+                     <div className="bg-stone-900 p-3 rounded-xl border border-stone-800">
                        <textarea 
                          value={descText} 
                          onChange={(e) => setDescText(e.target.value)}
@@ -619,7 +619,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
             <div className="flex flex-wrap items-center gap-3 shrink-0 justify-end z-[60]">
                <div className="relative group cursor-pointer">
                  <input type="file" multiple accept="image/*,video/*,audio/*" onChange={handleAddMedia} disabled={isUploading} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20 disabled:cursor-not-allowed" />
-                 <button disabled={isUploading} className="px-5 py-2.5 bg-white/10 hover:bg-white/20 backdrop-blur-md rounded-full text-sm font-medium transition-colors flex items-center gap-2 border border-white/10 relative overflow-hidden pointer-events-none">
+                 <button disabled={isUploading} className="px-5 py-2.5 bg-stone-800 hover:bg-stone-700 rounded-full text-sm font-medium transition-colors flex items-center gap-2 relative overflow-hidden pointer-events-none">
                    {isUploading ? (
                      <>
                        <span className="relative z-10 text-xs font-bold">{uploadProgress}%</span>
@@ -633,10 +633,10 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                
                {activeMedia && (
                  <>
-                   <button onClick={(e) => { e.stopPropagation(); handleDownloadSingle(); }} className="px-4 py-2.5 bg-stone-500/20 hover:bg-stone-500/40 text-stone-200 backdrop-blur-md rounded-full transition-colors flex items-center gap-2 border border-stone-500/20 z-20 cursor-pointer">
+                   <button onClick={(e) => { e.stopPropagation(); handleDownloadSingle(); }} className="px-4 py-2.5 bg-stone-700 hover:bg-stone-600 text-stone-200 rounded-full transition-colors flex items-center gap-2 z-20 cursor-pointer">
                      <Icons.Download /> <span className="text-sm font-medium hidden sm:inline">Save</span>
                    </button>
-                   <button onClick={(e) => { e.stopPropagation(); handleDeleteActiveMedia(); }} className="px-4 py-2.5 bg-red-500/20 hover:bg-red-500/40 text-red-200 backdrop-blur-md rounded-full transition-colors flex items-center gap-2 border border-red-500/20 z-20 cursor-pointer">
+                   <button onClick={(e) => { e.stopPropagation(); handleDeleteActiveMedia(); }} className="px-4 py-2.5 bg-red-900 hover:bg-red-800 text-red-200 rounded-full transition-colors flex items-center gap-2 z-20 cursor-pointer">
                      <Icons.Trash /> <span className="text-sm font-medium hidden sm:inline">Delete</span>
                    </button>
                  </>
@@ -721,7 +721,7 @@ const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) => {
     files.forEach(file => formData.append('files', file));
 
     uploadFilesWithProgress(
-      'http://localhost:8000/api/memories',
+      `${API_BASE_URL}/api/memories`,
       formData,
       (percent) => setUploadProgress(percent),
       (response) => {
@@ -872,7 +872,7 @@ const ChronicleView = ({ showDialog, onOpenMemory }) => {
   const fetchChronicle = async () => {
     setLoading(true);
     try {
-      const response = await fetch('http://localhost:8000/api/chronicle');
+      const response = await fetch(`${API_BASE_URL}/api/chronicle`);
       if (response.ok) {
         const data = await response.json();
         setChronicle(data);
@@ -903,7 +903,7 @@ const ChronicleView = ({ showDialog, onOpenMemory }) => {
           {/\.(mp4|webm|mov|ogg)$/i.test(m.file_url) ? (
             <video src={m.file_url} className="w-full h-auto grayscale group-hover:grayscale-0 transition-all duration-700" autoPlay muted loop playsInline />
           ) : (
-            <img src={m.file_url} className="w-full h-auto grayscale group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
+            <img src={m.file_url} loading="lazy" className="w-full h-auto grayscale group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
           )}
           <p className="text-center text-xs italic mt-3 text-stone-500 font-sans">Archived on {new Date(chronicle.memory.memory_date).toLocaleDateString()}</p>
           <div className="absolute inset-0 bg-stone-900/0 group-hover:bg-stone-900/10 transition-all duration-300 flex items-center justify-center opacity-0 group-hover:opacity-100 z-10">
@@ -1023,12 +1023,12 @@ const DatePlanner = ({ showDialog }) => {
   const padTypingTimeoutRef = useRef(null);
 
   useEffect(() => {
-    fetch('http://localhost:8000/api/chats')
+    fetch(`${API_BASE_URL}/api/chats`)
       .then(res => res.json())
       .then(data => setMessages(data || []))
       .catch(err => console.error("Chat load failed", err));
 
-    fetch('http://localhost:8000/api/itineraries')
+    fetch(`${API_BASE_URL}/api/itineraries`)
       .then(res => res.json())
       .then(data => {
          setItineraries(data || []);
@@ -1048,7 +1048,7 @@ const DatePlanner = ({ showDialog }) => {
   }, [activeDocId]);
 
   useEffect(() => {
-    ws.current = new WebSocket('ws://localhost:8000/ws/chat');
+    ws.current = new WebSocket(`${WS_BASE_URL}/ws/chat`);
     ws.current.onmessage = (event) => {
       const data = JSON.parse(event.data);
       if (data.senderId === userId) return;
@@ -1079,7 +1079,7 @@ const DatePlanner = ({ showDialog }) => {
   useEffect(() => {
     const timer = setTimeout(() => {
        if (activeDocId) {
-         fetch(`http://localhost:8000/api/itineraries/${activeDocId}`, {
+         fetch(`${API_BASE_URL}/api/itineraries/${activeDocId}`, {
            method: 'PUT',
            headers: { 'Content-Type': 'application/json' },
            body: JSON.stringify({ content: activeContent })
@@ -1164,7 +1164,7 @@ const DatePlanner = ({ showDialog }) => {
       inputValue: '',
       onConfirm: async (title) => {
         try {
-          const res = await fetch('http://localhost:8000/api/itineraries', {
+          const res = await fetch(`${API_BASE_URL}/api/itineraries`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: title })
@@ -1189,7 +1189,7 @@ const DatePlanner = ({ showDialog }) => {
       onConfirm: async (newTitle) => {
         if (!newTitle.trim()) return;
         try {
-          const res = await fetch(`http://localhost:8000/api/itineraries/${doc.id}`, {
+          const res = await fetch(`${API_BASE_URL}/api/itineraries/${doc.id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: newTitle.trim() })
@@ -1212,7 +1212,7 @@ const DatePlanner = ({ showDialog }) => {
       message: 'Are you sure you want to delete this plan forever?',
       onConfirm: async () => {
         try {
-          await fetch(`http://localhost:8000/api/itineraries/${activeDocId}`, { method: 'DELETE' });
+          await fetch(`${API_BASE_URL}/api/itineraries/${activeDocId}`, { method: 'DELETE' });
           const remaining = itineraries.filter(i => i.id !== activeDocId);
           setItineraries(remaining);
           if (remaining.length > 0) setActiveDocId(remaining[0].id);
@@ -1225,8 +1225,9 @@ const DatePlanner = ({ showDialog }) => {
   };
 
   return (
-    <div className="flex-1 flex flex-col md:flex-row gap-6 w-full">
-      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden min-h-[400px]">
+    <div className="w-full flex flex-col md:flex-row gap-6">
+      {/* OPTIMIZATION: Dynamic viewport height calculation (calc 100vh) keeps it perfectly bounded to screen size */}
+      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[50vh] md:h-[calc(100vh-12rem)] min-h-[400px]">
         <div className="bg-stone-50 border-b border-stone-100 p-5 shrink-0 flex items-center justify-between">
            <div>
              <h3 className="font-serif font-bold text-lg text-stone-800">Live Planner</h3>
@@ -1298,9 +1299,9 @@ const DatePlanner = ({ showDialog }) => {
         </form>
       </div>
 
-      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif min-h-[400px]">
-         <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0">
-            <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50">
+      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[60vh] md:h-[calc(100vh-12rem)] min-h-[400px]">
+         <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0 h-48 md:h-full">
+            <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50 shrink-0">
                <span className="font-bold text-stone-700 font-sans text-sm tracking-wide uppercase">Plans</span>
                <button onClick={createNewPlan} className="text-rose-500 hover:bg-rose-100 p-1.5 rounded-md transition-colors" title="New Plan"><Icons.Plus /></button>
             </div>
@@ -1335,7 +1336,7 @@ const DatePlanner = ({ showDialog }) => {
             </div>
          </div>
 
-         <div className="flex-1 flex flex-col relative min-w-0">
+         <div className="flex-1 flex flex-col relative min-w-0 h-full">
              {activeDocId ? (
                 <>
                    <div className="bg-white border-b border-stone-100 p-4 shrink-0 flex items-center justify-between z-10 shadow-sm relative">
@@ -1352,7 +1353,7 @@ const DatePlanner = ({ showDialog }) => {
                    <textarea
                       value={activeContent}
                       onChange={handleItineraryChange}
-                      className="flex-1 w-full bg-transparent p-6 sm:p-8 resize-none focus:outline-none text-stone-700 leading-relaxed text-lg custom-scrollbar z-0 overflow-y-auto min-h-[300px]"
+                      className="flex-1 w-full bg-transparent p-6 sm:p-8 resize-none focus:outline-none text-stone-700 leading-relaxed text-lg custom-scrollbar z-0 overflow-y-auto"
                       placeholder="Jot down your plans, timeline, and ideas here..."
                       style={{ backgroundImage: 'linear-gradient(transparent, transparent 31px, #e5e5e5 31px)', backgroundSize: '100% 32px', lineHeight: '32px' }}
                    />
@@ -1392,7 +1393,7 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
     setIsTyping(true);
 
     try {
-      const response = await fetch('http://localhost:8000/api/pookie/chat', {
+      const response = await fetch(`${API_BASE_URL}/api/pookie/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: userMessage.text, history: chatHistory.slice(-6) })
@@ -1418,7 +1419,7 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
         return (
           <div key={index} className="mt-3 space-y-2">
             <div className="rounded-xl overflow-hidden shadow-md bg-black max-h-56">
-              <img src={part} alt="Memory preview" className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform duration-300" onClick={() => window.open(part, '_blank')} />
+              <img src={part} loading="lazy" alt="Memory preview" className="w-full h-full object-cover cursor-pointer hover:scale-105 transition-transform duration-300" onClick={() => window.open(part, '_blank')} />
             </div>
             {matchingMemory && (
               <button onClick={() => { onSelectMemory(matchingMemory); setIsOpen(false); }} className="w-full bg-rose-50 hover:bg-rose-100 text-rose-600 text-xs font-bold py-2 px-3 rounded-lg transition-colors flex items-center justify-center gap-1.5 border border-rose-100 shadow-sm">
@@ -1486,20 +1487,43 @@ export default function App() {
   const [selectedMemory, setSelectedMemory] = useState(null);
   const [memories, setMemories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
   const [dialogConfig, setDialogConfig] = useState({ isOpen: false, type: 'alert', title: '', message: '', onConfirm: null, showInput: false, inputValue: '' });
+  const ITEMS_PER_PAGE = 12;
 
   const showDialog = (config) => setDialogConfig({ ...config, isOpen: true });
   const closeDialog = () => setDialogConfig(prev => ({ ...prev, isOpen: false }));
   const handleDialogInput = (val) => setDialogConfig(prev => ({ ...prev, inputValue: val }));
 
-  const fetchMemories = async () => {
-    setIsLoading(true);
+  const fetchMemories = async (pageNum = 0, isRefresh = false) => {
+    if (isRefresh) {
+      setIsLoading(true);
+      setPage(0);
+    }
     try {
-      const response = await fetch('http://localhost:8000/api/memories');
+      const offset = pageNum * ITEMS_PER_PAGE;
+      const response = await fetch(`${API_BASE_URL}/api/memories?limit=${ITEMS_PER_PAGE}&offset=${offset}`);
       if (response.ok) {
         const data = await response.json();
         const formattedData = data.map(item => ({ ...item, formattedDate: new Date(item.memory_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }) }));
-        setMemories(formattedData);
+        
+        if (data.length < ITEMS_PER_PAGE) {
+          setHasMore(false);
+        } else {
+          setHasMore(true);
+        }
+
+        if (isRefresh || pageNum === 0) {
+          setMemories(formattedData);
+        } else {
+          setMemories(prev => {
+            const existingIds = new Set(prev.map(m => m.id));
+            const newItems = formattedData.filter(m => !existingIds.has(m.id));
+            return [...prev, ...newItems];
+          });
+        }
+
         if (selectedMemory) {
           const updatedMemory = formattedData.find(m => m.id === selectedMemory.id);
           if (updatedMemory && updatedMemory.memory_media.length > 0) setSelectedMemory(updatedMemory);
@@ -1513,7 +1537,11 @@ export default function App() {
     }
   };
 
-  useEffect(() => { if (isAuthenticated) fetchMemories(); }, [isAuthenticated]);
+  const handleRefreshMemories = () => {
+    fetchMemories(0, true);
+  };
+
+  useEffect(() => { if (isAuthenticated) handleRefreshMemories(); }, [isAuthenticated]);
 
   const handleDeleteAlbum = (memory) => {
     showDialog({
@@ -1522,8 +1550,8 @@ export default function App() {
       message: `Are you sure you want to permanently delete "${memory.title}" and all its photos? This cannot be undone.`,
       onConfirm: async () => {
         try {
-          const response = await fetch(`http://localhost:8000/api/memories/${memory.id}`, { method: 'DELETE' });
-          if (response.ok) fetchMemories();
+          const response = await fetch(`${API_BASE_URL}/api/memories/${memory.id}`, { method: 'DELETE' });
+          if (response.ok) handleRefreshMemories();
           else {
             const err = await response.json();
             showDialog({ type: 'alert', title: 'Delete Failed', message: err.detail });
@@ -1564,7 +1592,7 @@ export default function App() {
               </p>
             </div>
 
-            {isLoading ? (
+            {isLoading && page === 0 ? (
               <div className="flex justify-center items-center py-20 relative z-10">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-rose-500"></div>
               </div>
@@ -1575,9 +1603,25 @@ export default function App() {
                 <p className="mt-2 text-stone-500">Click "+ Add Memory" to create your first smart album.</p>
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 relative z-10">
-                {memories.map((memory) => <MemoryCard key={memory.id} memory={memory} onClick={(mem) => setSelectedMemory(mem)} onDeleteClick={handleDeleteAlbum} />)}
-              </div>
+              <>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8 relative z-10">
+                  {memories.map((memory) => <MemoryCard key={memory.id} memory={memory} onClick={(mem) => setSelectedMemory(mem)} onDeleteClick={handleDeleteAlbum} />)}
+                </div>
+                {hasMore && (
+                  <div className="flex justify-center mt-12 relative z-10">
+                    <button 
+                      onClick={() => {
+                        const nextPage = page + 1;
+                        setPage(nextPage);
+                        fetchMemories(nextPage, false);
+                      }}
+                      className="bg-white hover:bg-stone-50 text-stone-800 border border-stone-200 px-8 py-3 rounded-full font-medium transition-all shadow-sm hover:shadow-md flex items-center gap-2"
+                    >
+                      <Icons.Refresh /> Load More Memories
+                    </button>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
@@ -1588,14 +1632,15 @@ export default function App() {
            </div>
         )}
 
+        {/* OPTIMIZATION: Main Planner container wrapper allows natural height control */}
         {activeTab === 'planner' && (
-           <div className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8 flex flex-col h-[calc(100dvh-5rem)] min-h-[600px]">
+           <div className="max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8">
               <DatePlanner showDialog={showDialog} />
            </div>
         )}
       </main>
 
-      <AddMemoryModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onMemoryAdded={fetchMemories} showDialog={showDialog} />
+      <AddMemoryModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onMemoryAdded={handleRefreshMemories} showDialog={showDialog} />
       
       <FullPageGallery 
          isOpen={!!selectedMemory} 
@@ -1603,7 +1648,7 @@ export default function App() {
          memory={selectedMemory} 
          memories={memories}
          onSelectMemory={setSelectedMemory}
-         onMemoryUpdated={fetchMemories} 
+         onMemoryUpdated={handleRefreshMemories} 
          showDialog={showDialog} 
       />
       
