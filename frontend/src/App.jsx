@@ -307,18 +307,18 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
          onClick={() => onClick(memory)}
          onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
     >
+      {/* MOBILE BUG FIX: Replaced hover states with md:group-hover to completely eliminate the double-tap bug on phones */}
       <div className="relative h-64 overflow-hidden bg-stone-900">
-        
         {isVideo(actualCover) ? (
-          <video src={actualCover} className="relative z-10 w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
+          <video src={actualCover} className="relative z-10 w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline preload="metadata" onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
         ) : (
-          <img src={actualCover} loading="lazy" alt={memory.title} className="relative z-10 w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-700 ease-in-out" />
+          <img src={actualCover} loading="lazy" alt={memory.title} className="relative z-10 w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" />
         )}
         
-        {/* Mobile UI Fix: Trash Can moved safely to Top-Left to completely avoid Pookie overlap */}
+        {/* MOBILE BUG FIX: Trash Can permanently moved to Top-Left. Pookie can never overlap this. */}
         <button 
           onClick={(e) => { e.stopPropagation(); onDeleteClick(memory); }}
-          className="absolute top-4 left-4 p-2 bg-white text-stone-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-colors z-30 shadow-md focus:outline-none focus:ring-2 focus:ring-red-500"
+          className="absolute top-4 left-4 p-2.5 bg-white/90 text-stone-500 hover:text-red-500 hover:bg-white rounded-full transition-colors z-30 shadow-md focus:outline-none focus:ring-2 focus:ring-red-500"
           title="Delete entire memory album"
         >
           <Icons.Trash />
@@ -338,7 +338,7 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
       </div>
       
       <div className="p-6 flex flex-col flex-grow relative">
-        <h3 className="text-xl font-serif font-semibold text-stone-800 mb-2 group-hover:text-rose-600 transition-colors pr-8 flex items-center gap-2">
+        <h3 className="text-xl font-serif font-semibold text-stone-800 mb-2 md:group-hover:text-rose-600 transition-colors flex items-center gap-2">
           {memory.title}
         </h3>
         <p className="text-stone-600 line-clamp-3 leading-relaxed whitespace-pre-wrap">
@@ -392,7 +392,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, isEditingDesc, mediaList.length, handleNext, handlePrev]);
+  }, [isOpen, isEditingDesc, mediaList.length]);
 
   if (!isOpen || !memory) return null;
 
@@ -479,7 +479,6 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
     }
   };
 
-  /* GPU Optimization: All heavy backdrop-blurs removed from the gallery for 60fps performance */
   return (
     <div className="fixed inset-0 z-[100] flex bg-stone-950 text-white animate-in fade-in duration-300">
       {!isFullscreen && (
@@ -515,7 +514,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                     </div>
                   </button>
                   <div className={`transition-all duration-300 overflow-hidden ${isExpanded ? 'max-h-96 opacity-100 mt-2' : 'max-h-0 opacity-0'}`}>
-                    <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
+                    <div className="pl-14 pr-2 grid grid-cols-3 gap-2 pb-3 pt-2 overflow-y-auto custom-scrollbar" style={{maxHeight: "350px"}}>
                       {m.memory_media?.map((media, idx) => (
                         <button key={media.id} onClick={(e) => { e.stopPropagation(); if(m.id !== memory.id) onSelectMemory(m); setCurrentIndex(idx); }}
                           className={`relative aspect-square rounded-md overflow-hidden bg-black transition-all flex items-center justify-center ${m.id === memory.id && currentIndex === idx ? 'ring-2 ring-rose-500 scale-105 z-10' : 'opacity-60 hover:opacity-100'}`}>
@@ -585,7 +584,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                    
                    <div className="text-stone-300 text-sm mb-3 font-medium flex items-center gap-4 flex-wrap">
                      {memory.formattedDate}
-                     <button onClick={(e) => { e.stopPropagation(); handleDownloadAlbum(); }} className="hover:text-rose-400 transition-colors flex items-center gap-1 bg-stone-800 hover:bg-stone-700 px-3 py-1 rounded-full text-xs">
+                     <button onClick={(e) => { e.stopPropagation(); handleDownloadAlbum(); }} className="hover:text-rose-400 transition-colors flex items-center gap-1 bg-stone-800 hover:bg-stone-700 px-3 py-1 rounded-full text-xs border border-transparent">
                        <Icons.Download /> Zip Album
                      </button>
                      <button onClick={() => setIsEditingDesc(!isEditingDesc)} className={`transition-colors flex items-center gap-1 px-3 py-1 rounded-full text-xs border ${isEditingDesc ? 'bg-rose-500/20 text-rose-400 border-rose-500/20' : 'bg-stone-800 hover:bg-stone-700 text-stone-300 border-transparent'}`}>
@@ -1049,44 +1048,58 @@ const DatePlanner = ({ showDialog }) => {
     }
   }, [activeDocId]);
 
+  /* MOBILE BUG FIX: Auto-reconnect WebSockets if the mobile browser puts them to sleep. */
   useEffect(() => {
-    ws.current = new WebSocket(`${WS_BASE_URL}/ws/chat`);
-    ws.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+    let reconnectTimer;
+    const connectWS = () => {
+      ws.current = new WebSocket(`${WS_BASE_URL}/ws/chat`);
       
-      // Sync plans seamlessly when a partner edits/creates/deletes on another device
-      if (data.type === 'refresh_plans') {
-         fetch(`${API_BASE_URL}/api/itineraries`)
-           .then(res => res.json())
-           .then(fetchedDocs => setItineraries(fetchedDocs || []));
-         return;
-      }
-
-      if (data.senderId === userId) return;
-
-      if (data.type === 'chat') {
-        setMessages((prev) => [...prev, data]);
-        if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-           ws.current.send(JSON.stringify({ type: 'read_receipt', senderId: userId }));
+      ws.current.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.type === 'refresh_plans') {
+           fetch(`${API_BASE_URL}/api/itineraries`)
+             .then(res => res.json())
+             .then(fetchedDocs => setItineraries(fetchedDocs || []));
+           return;
         }
-      } 
-      else if (data.type === 'read_receipt') {
-        setMessages((prev) => prev.map(m => m.senderId === userId ? { ...m, status: 'read' } : m));
-      }
-      else if (data.type === 'typing') {
-        if (data.field === 'chat') setPartnerTyping(data.isTyping);
-        else if (data.field === 'pad') {
-           // Ensure typing indicator only shows if partner is in the SAME document
-           if (data.docId === activeDocId) setPartnerEditing(data.isTyping);
+
+        if (data.senderId === userId) return;
+
+        if (data.type === 'chat') {
+          setMessages((prev) => [...prev, data]);
+          safeSend({ type: 'read_receipt', senderId: userId });
+        } 
+        else if (data.type === 'read_receipt') {
+          setMessages((prev) => prev.map(m => m.senderId === userId ? { ...m, status: 'read' } : m));
         }
-      } 
-      else if (data.type === 'itinerary') {
-        setItineraries(prev => prev.map(doc => doc.id === data.docId ? { ...doc, content: data.text } : doc));
-        if (activeDocId === data.docId) setActiveContent(data.text);
-      }
+        else if (data.type === 'typing') {
+          if (data.field === 'chat') setPartnerTyping(data.isTyping);
+          else if (data.field === 'pad') {
+             if (data.docId === activeDocId) setPartnerEditing(data.isTyping);
+          }
+        } 
+        else if (data.type === 'itinerary') {
+          setItineraries(prev => prev.map(doc => doc.id === data.docId ? { ...doc, content: data.text } : doc));
+          if (activeDocId === data.docId) setActiveContent(data.text);
+        }
+      };
+
+      ws.current.onclose = () => {
+        // If connection drops on mobile, try to reconnect after 3 seconds
+        reconnectTimer = setTimeout(connectWS, 3000);
+      };
     };
-    return () => { if (ws.current) ws.current.close(); };
+
+    connectWS();
+    return () => { clearTimeout(reconnectTimer); if (ws.current) ws.current.close(); };
   }, [userId, activeDocId]);
+
+  /* MOBILE BUG FIX: Safe WebSocket Sender. Prevents the app from crashing if connection drops. */
+  const safeSend = (msgObj) => {
+    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify(msgObj));
+    }
+  };
 
   useEffect(() => { messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages, partnerTyping]);
 
@@ -1105,22 +1118,20 @@ const DatePlanner = ({ showDialog }) => {
 
   const handleSend = (e) => {
     e.preventDefault();
-    if (input.trim() && ws.current) {
+    if (input.trim()) {
       const msgObj = { type: 'chat', text: input, senderId: userId, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'sent', id: Date.now() };
-      ws.current.send(JSON.stringify(msgObj));
+      safeSend(msgObj);
       setMessages((prev) => [...prev, msgObj]);
       setInput('');
-      ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: false, field: 'chat' }));
+      safeSend({ type: 'typing', senderId: userId, isTyping: false, field: 'chat' });
     }
   };
 
   const handleInputChange = (e) => {
     setInput(e.target.value);
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: true, field: 'chat' }));
-      clearTimeout(typingTimeoutRef.current);
-      typingTimeoutRef.current = setTimeout(() => ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: false, field: 'chat' })), 1500);
-    }
+    safeSend({ type: 'typing', senderId: userId, isTyping: true, field: 'chat' });
+    clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => safeSend({ type: 'typing', senderId: userId, isTyping: false, field: 'chat' }), 1500);
   };
 
   const handleItineraryChange = (e) => {
@@ -1128,12 +1139,10 @@ const DatePlanner = ({ showDialog }) => {
     setActiveContent(newText);
     setItineraries(prev => prev.map(doc => doc.id === activeDocId ? { ...doc, content: newText } : doc));
     
-    if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-      ws.current.send(JSON.stringify({ type: 'itinerary', docId: activeDocId, text: newText, senderId: userId }));
-      ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: true, field: 'pad', docId: activeDocId }));
-      clearTimeout(padTypingTimeoutRef.current);
-      padTypingTimeoutRef.current = setTimeout(() => ws.current.send(JSON.stringify({ type: 'typing', senderId: userId, isTyping: false, field: 'pad' })), 1500);
-    }
+    safeSend({ type: 'itinerary', docId: activeDocId, text: newText, senderId: userId });
+    safeSend({ type: 'typing', senderId: userId, isTyping: true, field: 'pad', docId: activeDocId });
+    clearTimeout(padTypingTimeoutRef.current);
+    padTypingTimeoutRef.current = setTimeout(() => safeSend({ type: 'typing', senderId: userId, isTyping: false, field: 'pad' }), 1500);
   };
 
   const startVoiceMessage = async () => {
@@ -1149,10 +1158,8 @@ const DatePlanner = ({ showDialog }) => {
         reader.readAsDataURL(blob);
         reader.onloadend = () => {
           const msgObj = { type: 'chat', text: '', audio: reader.result, senderId: userId, timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), status: 'sent', id: Date.now() };
-          if (ws.current && ws.current.readyState === WebSocket.OPEN) {
-            ws.current.send(JSON.stringify(msgObj));
-            setMessages(prev => [...prev, msgObj]);
-          }
+          safeSend(msgObj);
+          setMessages(prev => [...prev, msgObj]);
         };
       };
       mediaRecorderRef.current.start();
@@ -1186,7 +1193,7 @@ const DatePlanner = ({ showDialog }) => {
           const newDoc = await res.json();
           setItineraries(prev => [newDoc, ...prev]);
           setActiveDocId(newDoc.id);
-          if (ws.current) ws.current.send(JSON.stringify({ type: 'refresh_plans' }));
+          safeSend({ type: 'refresh_plans' });
         } catch (e) {
           console.error("Failed to create plan", e);
         }
@@ -1211,7 +1218,7 @@ const DatePlanner = ({ showDialog }) => {
           });
           if (res.ok) {
             setItineraries(prev => prev.map(i => i.id === doc.id ? { ...i, title: newTitle.trim() } : i));
-            if (ws.current) ws.current.send(JSON.stringify({ type: 'refresh_plans' }));
+            safeSend({ type: 'refresh_plans' });
           }
         } catch (e) {
           console.error("Failed to rename plan", e);
@@ -1233,7 +1240,7 @@ const DatePlanner = ({ showDialog }) => {
           setItineraries(remaining);
           if (remaining.length > 0) setActiveDocId(remaining[0].id);
           else setActiveDocId(null);
-          if (ws.current) ws.current.send(JSON.stringify({ type: 'refresh_plans' }));
+          safeSend({ type: 'refresh_plans' });
         } catch (e) {
           console.error("Failed to delete plan", e);
         }
@@ -1241,13 +1248,8 @@ const DatePlanner = ({ showDialog }) => {
     });
   };
 
-  /* 
-    CRITICAL ARCHITECTURE: 
-    - Desktop uses strictly dynamic math (md:h-full derived from md:h-[calc(100vh-6rem)]) so it NEVER squishes.
-    - Mobile completely disables dynamic math. Chat is an un-squishable 500px block. Notepad is a 600px block. 
-  */
   return (
-    <>
+    <div className="flex-1 flex flex-col md:flex-row gap-6 w-full h-full">
       <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-full shrink-0">
         <div className="bg-stone-50 border-b border-stone-100 p-5 shrink-0 flex items-center justify-between">
            <div>
@@ -1260,7 +1262,7 @@ const DatePlanner = ({ showDialog }) => {
            <span className="text-2xl">💬</span>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-stone-50/30 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-stone-50/30 custom-scrollbar min-h-0">
           {messages.length === 0 && (
             <div className="h-full flex flex-col items-center justify-center text-stone-400 space-y-2 opacity-70">
               <span className="text-4xl">👋</span>
@@ -1320,13 +1322,13 @@ const DatePlanner = ({ showDialog }) => {
         </form>
       </div>
 
-      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[600px] md:h-full shrink-0">
-         <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-b md:border-b-0 md:border-r border-stone-200 flex flex-col shrink-0 h-[150px] md:h-full">
+      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[600px] md:h-full shrink-0">
+         <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0 h-40 md:h-full">
             <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50 shrink-0">
                <span className="font-bold text-stone-700 font-sans text-sm tracking-wide uppercase">Plans</span>
                <button onClick={createNewPlan} className="text-rose-500 hover:bg-rose-100 p-1.5 rounded-md transition-colors" title="New Plan"><Icons.Plus /></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 custom-scrollbar min-h-0">
                {itineraries.length === 0 ? (
                  <div className="text-center p-4 text-xs font-sans text-stone-400">No plans yet. Click + to start!</div>
                ) : (
@@ -1357,7 +1359,7 @@ const DatePlanner = ({ showDialog }) => {
             </div>
          </div>
 
-         <div className="flex-1 flex flex-col relative min-w-0 min-h-0 overflow-hidden">
+         <div className="flex-1 flex flex-col relative min-w-0 h-full min-h-0">
              {activeDocId ? (
                 <>
                    <div className="bg-white border-b border-stone-100 p-4 shrink-0 flex items-center justify-between z-10 shadow-sm relative">
@@ -1374,7 +1376,7 @@ const DatePlanner = ({ showDialog }) => {
                    <textarea
                       value={activeContent}
                       onChange={handleItineraryChange}
-                      className="flex-1 w-full bg-transparent p-6 sm:p-8 resize-none focus:outline-none text-stone-700 leading-relaxed text-lg custom-scrollbar z-0 overflow-y-auto"
+                      className="flex-1 w-full bg-transparent p-6 sm:p-8 resize-none focus:outline-none text-stone-700 leading-relaxed text-lg custom-scrollbar z-0 overflow-y-auto min-h-0"
                       placeholder="Jot down your plans, timeline, and ideas here..."
                       style={{ backgroundImage: 'linear-gradient(transparent, transparent 31px, #e5e5e5 31px)', backgroundSize: '100% 32px', lineHeight: '32px' }}
                    />
@@ -1387,7 +1389,7 @@ const DatePlanner = ({ showDialog }) => {
              )}
          </div>
       </div>
-    </>
+    </div>
   );
 };
 
@@ -1604,7 +1606,7 @@ export default function App() {
       
       <main className="flex-1 w-full relative z-10 flex flex-col min-h-0">
         {activeTab === 'vault' && (
-          <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-40">
+          <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-32">
             <div className="text-center mb-16 relative z-10">
               <h2 className="text-5xl font-serif text-stone-800 mb-4 tracking-tight drop-shadow-sm">Our Memory Vault</h2>
               <p className="text-stone-600 max-w-2xl mx-auto text-lg">
@@ -1648,13 +1650,14 @@ export default function App() {
         )}
 
         {activeTab === 'chronicle' && (
-           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-40">
+           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-32">
               <ChronicleView showDialog={showDialog} onOpenMemory={setSelectedMemory} />
            </div>
         )}
 
+        {/* Mobile UI Fix: Allows the content to stack gracefully and scroll on mobile, while filling full screen dynamically on desktop */}
         {activeTab === 'planner' && (
-           <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 lg:p-8 flex flex-col md:flex-row gap-6 md:h-[calc(100vh-6rem)] pb-32 md:pb-8">
+           <div className="w-full max-w-6xl mx-auto p-4 md:p-6 lg:p-8 flex flex-col md:flex-row gap-6 md:h-[calc(100vh-6rem)] pb-32 md:pb-8">
               <DatePlanner showDialog={showDialog} />
            </div>
         )}
