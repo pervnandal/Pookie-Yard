@@ -47,12 +47,24 @@ export const DatePlanner = ({ showDialog }) => {
     }
   };
 
-  // --- DATA FETCHING FIX ---
+  // --- DATA FETCHING WITH DUPLICATE FILTER ---
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/chats`, { headers: { 'Cache-Control': 'no-store' } })
       .then(res => res.json())
       .then(data => {
-        if (Array.isArray(data)) setMessages(data);
+        if (Array.isArray(data)) {
+          // Instantly hides historical duplicates caused by the old backend dual-save bug
+          const cleanedData = data.filter((msg, idx, arr) => {
+             if (idx === 0) return true;
+             const prev = arr[idx - 1];
+             return !(
+               msg.text === prev.text && 
+               msg.timestamp === prev.timestamp && 
+               (msg.sender_id || msg.senderId) === (prev.sender_id || prev.senderId)
+             );
+          });
+          setMessages(cleanedData);
+        }
       })
       .catch(err => console.error("Chat load failed", err));
 
@@ -101,6 +113,7 @@ export const DatePlanner = ({ showDialog }) => {
         if (data.senderId === userId) return; 
 
         if (data.type === 'chat') {
+          // Double-text deduplication lock for live messages
           setMessages((prev) => {
             if (prev.some(m => m.id === data.id)) return prev;
             return [...prev, data];
@@ -168,7 +181,7 @@ export const DatePlanner = ({ showDialog }) => {
     return () => clearTimeout(timer);
   }, [activeContent, activeDocId]);
 
-  // --- EXPLICIT DATABASE SAVING LOGIC ADDED HERE ---
+  // --- EXPLICIT DATABASE SAVING LOGIC ---
   const handleSend = async (e) => {
     e.preventDefault();
     if (input.trim()) {
@@ -332,12 +345,10 @@ export const DatePlanner = ({ showDialog }) => {
   };
 
   return (
-    // --- THE UI FIX: THE ABSOLUTE INSET LOCK ---
-    // This perfectly isolates the sizing from App.jsx so it cannot grow or shrink
     <div className="w-full flex-1 relative flex flex-col md:block">
       <div className="w-full h-full md:absolute md:inset-0 flex flex-col md:flex-row gap-6">
         
-        {/* 📱 CHAT BOX - Fixed rigid size */}
+        {/* CHAT BOX */}
         <div className="flex flex-col w-full md:w-[350px] lg:w-[380px] shrink-0 h-[500px] md:h-full bg-white rounded-[2rem] shadow-sm border border-stone-200 overflow-hidden">
           
           <div className="h-[76px] shrink-0 p-5 border-b border-stone-100 flex items-center justify-between bg-white z-10">
@@ -351,7 +362,6 @@ export const DatePlanner = ({ showDialog }) => {
              <span className="text-3xl opacity-80">💬</span>
           </div>
           
-          {/* Messages strictly scroll inside the container */}
           <div ref={chatContainerRef} className="flex-1 overflow-y-auto p-4 space-y-5 bg-stone-50/40 custom-scrollbar">
             {messages.length === 0 && (
               <div className="h-full flex flex-col items-center justify-center text-stone-400 space-y-2 opacity-70">
@@ -364,7 +374,6 @@ export const DatePlanner = ({ showDialog }) => {
               return (
                 <div key={msg.id || idx} className={`flex flex-col w-full ${isMe ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out`}>
                    
-                   {/* TEXT OVERFLOW FIX: wordBreak physically snaps long random strings to a new line */}
                    <div 
                       className={`max-w-[85%] px-4 py-3 rounded-2xl text-[15px] leading-relaxed shadow-sm ${isMe ? 'bg-rose-500 text-white rounded-br-sm' : 'bg-white border border-stone-200 text-stone-800 rounded-bl-sm'}`}
                       style={{ wordBreak: 'break-word', overflowWrap: 'break-word', whiteSpace: 'pre-wrap' }}
@@ -418,10 +427,9 @@ export const DatePlanner = ({ showDialog }) => {
         </div>
 
 
-        {/* 📝 NOTEPAD PANEL - Fixed rigid layout matches chat panel bounds */}
+        {/* NOTEPAD PANEL */}
         <div className="flex-1 flex flex-col md:flex-row bg-[#fdfbf7] rounded-[2rem] shadow-sm border border-stone-200 h-[600px] md:h-full overflow-hidden">
            
-           {/* Navigation Sidebar */}
            <div className="flex flex-col w-full md:w-44 lg:w-52 shrink-0 bg-stone-50/50 border-b md:border-b-0 md:border-r border-stone-200 h-[25vh] md:h-full min-h-0 min-w-0">
               <div className="h-[76px] shrink-0 p-5 border-b border-stone-200 flex justify-between items-center bg-white/50">
                  <span className="font-bold text-stone-800 font-sans text-xs tracking-widest uppercase">Saved Plans</span>
@@ -455,7 +463,6 @@ export const DatePlanner = ({ showDialog }) => {
               </div>
            </div>
 
-           {/* Notepad Editor area */}
            <div className="flex-1 flex flex-col min-w-0 h-full bg-[#fdfbf7]">
                {activeDocId ? (
                   <>
