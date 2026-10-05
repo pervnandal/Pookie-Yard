@@ -12,7 +12,6 @@ export const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
   };
 
   return (
-    // GLASS THEME APPLIED HERE
     <header className="sticky top-0 z-[100] w-full bg-white/50 backdrop-blur-2xl border-b border-white/60 shadow-sm">
       <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex justify-between items-center h-20">
@@ -36,9 +35,10 @@ export const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
           </nav>
 
           <div className="flex items-center gap-2 sm:gap-3">
-            <div className="hidden md:flex items-center gap-2 bg-white/60 backdrop-blur-sm px-4 py-1.5 rounded-full border border-white/80 shadow-sm mr-1">
-               <span className="text-rose-500 animate-pulse text-xs">❤️</span>
-               <span className="text-xs font-bold text-rose-600 font-sans whitespace-nowrap">{calculateDaysTogether()} Days</span>
+            {/* 📱 MOBILE FIX: Removed "hidden md:flex", adjusted mobile padding & font sizes */}
+            <div className="flex items-center gap-1.5 sm:gap-2 bg-white/60 backdrop-blur-sm px-3 sm:px-4 py-1.5 rounded-full border border-white/80 shadow-sm mr-1">
+               <span className="text-rose-500 animate-pulse text-[10px] sm:text-xs">❤️</span>
+               <span className="text-[10px] sm:text-xs font-bold text-rose-600 font-sans whitespace-nowrap">{calculateDaysTogether()} Days</span>
             </div>
             <button onClick={onAddClick} className="bg-stone-900/90 backdrop-blur-sm hover:bg-stone-800 text-white p-2 sm:px-5 sm:py-2.5 rounded-full font-medium transition-all shadow-md hover:shadow-lg flex items-center gap-2">
               <Icons.Plus /> <span className="hidden sm:inline">Add</span>
