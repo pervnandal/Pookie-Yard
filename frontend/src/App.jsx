@@ -107,29 +107,92 @@ const Icons = {
 // Intelligently parses Google Drive, YouTube, and legacy Supabase URLs
 const parseMediaUrl = (rawUrl) => {
   try {
-    const data = JSON.parse(rawUrl);
-    let thumb = data.thumb || data.url || rawUrl;
-    if (data.provider === 'youtube') thumb = `https://img.youtube.com/vi/${data.id}/maxresdefault.jpg`;
+    let dataStr = typeof rawUrl === 'string' ? rawUrl.trim() : rawUrl;
     
-    return {
-      provider: data.provider || 'unknown',
-      id: data.id,
-      thumb: thumb,
-      original: data.original || data.url || rawUrl,
-      isYoutube: data.provider === 'youtube',
-      isDrive: data.provider === 'drive',
-      isVoice: false
-    };
+    // Safely unpack double-stringified JSON saves from the database
+    while (typeof dataStr === 'string' && (dataStr.startsWith('{') || dataStr.startsWith('"') || dataStr.startsWith("'"))) {
+      try { 
+        const parsed = JSON.parse(dataStr);
+        if (typeof parsed === 'string') dataStr = parsed;
+        else { dataStr = parsed; break; }
+      } catch(e) { break; }
+    }
+
+    const data = typeof dataStr === 'object' ? dataStr : { provider: 'legacy', url: rawUrl };
+
+    // 1. YouTube Video Routing
+    if (data.provider === 'youtube') {
+      const ytid = data.id || (data.url && data.url.split('v=')[1]) || 'unknown';
+      return {
+        provider: 'youtube',
+        id: ytid,
+        thumb: `https://img.youtube.com/vi/${ytid}/maxresdefault.jpg`,
+        original: `https://www.youtube.com/embed/${ytid}?autoplay=1&rel=0`,
+        isYoutube: true,
+        isDrive: false,
+        isLegacyVideo: false,
+        isVoice: false
+      };
+    }
+
+    // 2. Google Drive Image Routing (THE FIX)
+    if (data.provider === 'drive' && data.id) {
+      // PROXY FIX: Chrome LazyLoad interventions silently block Drive redirects.
+      // Routing through our backend proxy forces a direct 200 HTTP Image response.
+      const driveRenderLink = `${API_BASE_URL}/api/media/proxy/${data.id}`;
+      return {
+        provider: 'drive',
+        id: data.id,
+        thumb: driveRenderLink,
+        original: driveRenderLink,
+        isYoutube: false,
+        isDrive: true,
+        isLegacyVideo: false,
+        isVoice: false
+      };
+    }
+
+    // 3. Fallback for generic JSON
+    if (data.provider && data.provider !== 'legacy') {
+       return {
+          provider: data.provider,
+          id: data.id,
+          thumb: data.thumb || data.url || data.original,
+          original: data.original || data.url || data.thumb,
+          isYoutube: false,
+          isDrive: false,
+          isLegacyVideo: false,
+          isVoice: false
+       };
+    }
+    
+    // Trigger catch block for legacy string URLs
+    throw new Error("Fallback to legacy");
+    
   } catch {
     // Legacy Supabase URLs support (doesn't break old images)
-    const isVoice = rawUrl.includes('voice_note');
-    const isVideo = /\.(mp4|webm|mov|ogg)$/i.test(rawUrl.split('?')[0]);
+    const urlStr = String(rawUrl);
+    const isVoice = urlStr.includes('voice_note');
+    const isVideo = /\.(mp4|webm|mov|ogg)$/i.test(urlStr.split('?')[0]);
+    let isDrive = urlStr.includes('drive.google.com');
+    let thumb = urlStr;
+    let original = urlStr;
+
+    if (isDrive) {
+       const idMatch = urlStr.match(/id=([^&]+)/) || urlStr.match(/d\/([a-zA-Z0-9_-]+)/);
+       if (idMatch && idMatch[1]) {
+           thumb = `https://drive.google.com/uc?id=${idMatch[1]}`;
+           original = thumb;
+       }
+    }
+
     return {
-      provider: 'supabase',
-      thumb: rawUrl,
-      original: rawUrl,
+      provider: isDrive ? 'drive' : 'supabase',
+      id: null,
+      thumb: thumb,
+      original: original,
       isYoutube: false,
-      isDrive: false,
+      isDrive: isDrive,
       isLegacyVideo: isVideo,
       isVoice: isVoice
     };
@@ -324,8 +387,8 @@ const Header = ({ onAddClick, activeTab, setActiveTab, onLogout }) => {
 };
 
 const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
-  const displayMediaRaw = memory.memory_media?.length > 0 ? memory.memory_media[0].file_url : '';
-  const mediaObj = displayMediaRaw ? parseMediaUrl(displayMediaRaw) : { thumb: 'https://images.unsplash.com/photo-1518199268815-95a17b8f6459?auto=format&fit=crop&q=80&w=800' };
+  const displayMediaRaw = memory.memory_media?.find(m => !parseMediaUrl(m.file_url).isVoice)?.file_url || memory.memory_media?.[0]?.file_url;
+  const mediaObj = parseMediaUrl(displayMediaRaw);
 
   return (
     <div className="bg-white rounded-2xl overflow-hidden shadow-sm md:hover:shadow-xl transition-all duration-300 border border-stone-100 group cursor-pointer flex flex-col h-full relative"
@@ -335,21 +398,21 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
     >
       <div className="relative h-64 overflow-hidden bg-stone-900 flex items-center justify-center">
         {mediaObj.isVoice ? (
-            <div className="w-full h-full flex flex-col items-center justify-center bg-stone-800 text-rose-400">
-               <Icons.Mic />
-               <span className="text-xs font-medium mt-2">Audio Note</span>
-            </div>
-        ) : mediaObj.isYoutube || mediaObj.isLegacyVideo ? (
-            <>
-               <img src={mediaObj.thumb} loading="lazy" className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out opacity-80" />
-               <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="w-12 h-12 bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center text-white">
-                     ▶
-                  </div>
-               </div>
-            </>
+           <div className="w-full h-full flex flex-col items-center justify-center bg-stone-800 text-rose-400">
+             <Icons.Mic />
+             <span className="text-xs font-medium mt-2">Audio Note</span>
+           </div>
+        ) : mediaObj.isYoutube ? (
+           <>
+             <img src={mediaObj.thumb} loading="lazy" className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out opacity-80" />
+             <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="w-12 h-12 bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center text-white">▶</div>
+             </div>
+           </>
+        ) : mediaObj.isLegacyVideo ? (
+           <video src={mediaObj.original} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" muted loop playsInline onMouseEnter={(e)=>e.target.play()} onMouseLeave={(e)=>e.target.pause()} />
         ) : (
-            <img src={mediaObj.thumb} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" />
+           <img src={mediaObj.thumb} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" />
         )}
         
         <button 
@@ -367,6 +430,7 @@ const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
         
         {memory.memory_media && memory.memory_media.length > 1 && (
           <div className="absolute bottom-4 right-4 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-xs font-medium text-white shadow-md z-20 flex items-center gap-1.5">
+            {memory.memory_media.some(m => parseMediaUrl(m.file_url).isVoice) && <Icons.Mic />}
             +{memory.memory_media.length - 1} media
           </div>
         )}
@@ -459,7 +523,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
       message: 'Are you sure you want to permanently delete this file?',
       onConfirm: async () => {
         try {
-          const response = await fetch(`${API_BASE_URL}/api/media/${activeMedia.id}`, { method: 'DELETE' });
+          const response = await fetch(`${API_BASE_URL}/api/media/${mediaList[currentIndex].id}`, { method: 'DELETE' });
           if (response.ok) {
             onMemoryUpdated(); 
             if (currentIndex >= mediaList.length - 1) setCurrentIndex(Math.max(0, mediaList.length - 2));
@@ -524,8 +588,8 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
           <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
             {memories.map((m) => {
               const isExpanded = expandedAlbumId === m.id;
-              const displayMediaRaw = m.memory_media?.length > 0 ? m.memory_media[0].file_url : '';
-              const parsedThumb = displayMediaRaw ? parseMediaUrl(displayMediaRaw) : null;
+              const displayMediaRaw = m.memory_media?.find(med => !parseMediaUrl(med.file_url).isVoice)?.file_url || m.memory_media?.[0]?.file_url;
+              const parsedThumb = parseMediaUrl(displayMediaRaw);
               
               return (
                 <div key={m.id} className="flex flex-col">
@@ -536,7 +600,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                     className={`w-full text-left p-2.5 rounded-xl flex items-center gap-3 transition-all duration-200 ${isExpanded ? 'bg-stone-800 shadow-inner' : 'md:hover:bg-stone-800/50 opacity-70 md:hover:opacity-100'}`}
                   >
                     <div className="w-12 h-12 rounded-lg bg-black shrink-0 overflow-hidden relative flex items-center justify-center">
-                      {parsedThumb?.isVoice ? <Icons.Mic /> : <img src={parsedThumb?.thumb} loading="lazy" className="w-full h-full object-cover opacity-80" />}
+                      {parsedThumb.isVoice ? <Icons.Mic className="text-stone-400" /> : parsedThumb.isLegacyVideo ? <video src={parsedThumb.original} className="w-full h-full object-cover opacity-80" preload="metadata" /> : <img src={parsedThumb.thumb} loading="lazy" className="w-full h-full object-cover opacity-80" />}
                     </div>
                     <div className="flex-1 min-w-0 flex items-center justify-between">
                       <div>
@@ -553,7 +617,7 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                         return (
                           <button key={media.id} onClick={(e) => { e.stopPropagation(); if(m.id !== memory.id) onSelectMemory(m); setCurrentIndex(idx); }}
                             className={`relative aspect-square rounded-md overflow-hidden bg-black transition-all flex items-center justify-center ${m.id === memory.id && currentIndex === idx ? 'ring-2 ring-rose-500 scale-105 z-10' : 'opacity-60 md:hover:opacity-100'}`}>
-                            {parsed.isVoice ? <Icons.Mic className="text-stone-400" /> : <img src={parsed.thumb} loading="lazy" className="w-full h-full object-cover" />}
+                            {parsed.isVoice ? <Icons.Mic className="text-stone-400" /> : parsed.isLegacyVideo ? <video src={parsed.original} className="w-full h-full object-cover" preload="metadata" /> : <img src={parsed.thumb} loading="lazy" className="w-full h-full object-cover" />}
                           </button>
                         );
                       })}
@@ -581,11 +645,11 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
            </button>
         </div>
 
-        <div className="flex-1 relative flex items-center justify-center p-4 md:p-12 min-h-0 z-0">
+        <div className="flex-1 relative flex items-center justify-center p-4 md:p-12 min-h-0 z-0 pointer-events-none">
           {mediaList.length > 0 ? (
             <>
               {activeMedia.isVoice ? (
-                <div className="w-full max-w-md bg-stone-900 p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 border border-stone-800">
+                <div className="w-full max-w-md bg-stone-900 p-8 rounded-3xl shadow-2xl flex flex-col items-center gap-6 border border-stone-800 pointer-events-auto">
                    <div className="w-24 h-24 bg-rose-500/20 rounded-full flex items-center justify-center text-rose-400 animate-pulse">
                       <Icons.Mic />
                    </div>
@@ -593,11 +657,13 @@ const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, on
                    <audio src={activeMedia.original} controls className="w-full outline-none" autoPlay />
                 </div>
               ) : activeMedia.isYoutube ? (
-                <iframe src={`https://www.youtube.com/embed/${activeMedia.id}?rel=0&autoplay=1`} className="w-full h-full max-w-5xl rounded-lg shadow-2xl z-10 relative" allow="autoplay; fullscreen" />
+                <div className="w-full h-full max-w-5xl rounded-lg shadow-2xl z-10 relative pointer-events-auto flex items-center justify-center bg-black">
+                   <iframe src={`${activeMedia.original}?autoplay=1&rel=0`} className="w-full h-full border-0" style={{aspectRatio: '16/9'}} allow="autoplay; fullscreen" />
+                </div>
               ) : activeMedia.isLegacyVideo ? (
-                <video src={activeMedia.original} controls autoPlay className="w-full h-full object-contain rounded-sm z-10 relative" />
+                <video src={activeMedia.original} controls autoPlay className="w-full h-full object-contain rounded-sm z-10 relative pointer-events-auto" />
               ) : (
-                <img src={activeMedia.original} alt="Memory Viewer" className="w-full h-full object-contain z-10 relative" />
+                <img src={activeMedia.original} alt="Memory Viewer" className="w-full h-full object-contain z-10 relative pointer-events-auto" />
               )}
               
               {mediaList.length > 1 && (
@@ -932,21 +998,20 @@ const ChronicleView = ({ showDialog, onOpenMemory }) => {
     const mediaList = chronicle.memory.memory_media || [];
     const text = chronicle.article || "";
     
-    const visualMedia = mediaList.filter(m => {
-       const parsed = parseMediaUrl(m.file_url);
-       return !parsed.isVoice;
-    });
-    const img1 = visualMedia.length > 0 ? parseMediaUrl(visualMedia[0].file_url) : null;
-    const img2 = visualMedia.length > 1 ? parseMediaUrl(visualMedia[1].file_url) : null;
+    const visualMedia = mediaList.map(m => parseMediaUrl(m.file_url)).filter(m => m && !m.isVoice);
+    const img1 = visualMedia.length > 0 ? visualMedia[0] : null;
+    const img2 = visualMedia.length > 1 ? visualMedia[1] : null;
 
-    const renderMedia = (parsed, rotateClass) => {
-      if (!parsed) return null;
+    const renderMedia = (m, rotateClass) => {
+      if (!m) return null;
       return (
         <div className={`bg-white p-3 shadow-md ${rotateClass} transition-transform duration-500 ease-out border border-stone-200 relative group cursor-pointer block w-full mb-6`} onClick={() => onOpenMemory(chronicle.memory)} title="Click to view full album">
-          {parsed.isYoutube ? (
-            <img src={parsed.thumb} className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
+          {m.isYoutube ? (
+            <img src={m.thumb} className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
+          ) : m.isLegacyVideo ? (
+            <video src={m.original} className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" muted loop playsInline />
           ) : (
-            <img src={parsed.thumb} loading="lazy" className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
+            <img src={m.thumb} loading="lazy" className="w-full h-auto grayscale md:group-hover:grayscale-0 transition-all duration-700" alt="Memory snapshot" />
           )}
           <p className="text-center text-xs italic mt-3 text-stone-500 font-sans">Archived on {new Date(chronicle.memory.memory_date).toLocaleDateString()}</p>
           <div className="absolute inset-0 bg-stone-900/0 md:group-hover:bg-stone-900/10 transition-all duration-300 flex items-center justify-center opacity-0 md:group-hover:opacity-100 z-10">
@@ -1294,7 +1359,7 @@ const DatePlanner = ({ showDialog }) => {
 
   return (
     <div className="flex-1 flex flex-col md:flex-row gap-6 w-full h-full">
-      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[500px] md:h-full shrink-0">
+      <div className="w-full md:w-[35%] lg:w-[30%] flex flex-col bg-white rounded-3xl shadow-sm border border-stone-200 overflow-hidden h-[450px] md:h-full shrink-0">
         <div className="bg-stone-50 border-b border-stone-100 p-5 shrink-0 flex items-center justify-between">
            <div>
              <h3 className="font-serif font-bold text-lg text-stone-800">Live Planner</h3>
@@ -1365,7 +1430,7 @@ const DatePlanner = ({ showDialog }) => {
         </form>
       </div>
 
-      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[600px] md:h-full shrink-0">
+      <div className="w-full md:w-[65%] lg:w-[70%] flex flex-col md:flex-row bg-[#fdfbf7] rounded-3xl shadow-sm border border-stone-200 overflow-hidden font-serif h-[500px] md:h-full shrink-0">
          <div className="w-full md:w-48 lg:w-56 bg-stone-50/50 border-r border-stone-200 flex flex-col shrink-0 h-40 md:h-full">
             <div className="p-4 border-b border-stone-200 flex justify-between items-center bg-white/50 shrink-0">
                <span className="font-bold text-stone-700 font-sans text-sm tracking-wide uppercase">Plans</span>
@@ -1487,7 +1552,7 @@ const PookieWidget = ({ memories, onSelectMemory, isGalleryOpen }) => {
       if (urlRegex.test(part)) {
         const matchingMemory = memories?.find(m => m.memory_media?.some(med => {
             const parsed = parseMediaUrl(med.file_url);
-            return parsed.original === part || parsed.thumb === part || med.file_url === part;
+            return parsed && (parsed.original === part || parsed.thumb === part || med.file_url === part);
         }));
         return (
           <div key={index} className="mt-3 space-y-2">

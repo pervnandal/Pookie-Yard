@@ -19,12 +19,10 @@ from supabase import create_client, Client
 from groq import Groq
 
 # Google API Imports
-from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
-import pickle
 
 load_dotenv()
 app = FastAPI()
@@ -47,29 +45,41 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 groq_client = Groq(api_key=GROQ_API_KEY) if GROQ_API_KEY else None
 
-# --- GOOGLE DRIVE MULTI-ACCOUNT LOGIC ---
-SCOPES_DRIVE = ['https://www.googleapis.com/auth/drive.file']
-SCOPES_YOUTUBE = ['https://www.googleapis.com/auth/youtube.upload']
-
-def get_drive_service(account_index=1):
-    json_path = f"drive_account_{account_index}.json"
-    if not os.path.exists(json_path):
-        return None, None
-    creds = ServiceAccountCredentials.from_service_account_file(json_path, scopes=SCOPES_DRIVE)
-    service = build('drive', 'v3', credentials=creds, cache_discovery=False)
-    folder_id = os.getenv(f"DRIVE_FOLDER_ID_{account_index}")
-    return service, folder_id
+# --- UNIFIED GOOGLE OAUTH LOGIC ---
+def get_google_credentials(token_prefix, account_index=1):
+    """Loads the pre-authorized user token generated from your laptop."""
+    # Look for token.json or token_1.json
+    token_path = f"{token_prefix}_{account_index}.json" if account_index > 1 else f"{token_prefix}.json"
+    
+    if not os.path.exists(token_path):
+        if account_index == 1 and os.path.exists(f"{token_prefix}_1.json"):
+            token_path = f"{token_prefix}_1.json"
+        else:
+            return None
+            
+    try:
+        creds = Credentials.from_authorized_user_file(token_path)
+        # Automatically refresh the token if it has expired
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+        return creds
+    except Exception as e:
+        print(f"Auth Error on {token_path}: {e}")
+        return None
 
 def upload_to_drive(file_path, mime_type, original_filename):
-    # Try accounts sequentially until one succeeds (in case storage is full)
     for i in range(1, 10):
-        service, folder_id = get_drive_service(i)
-        if not service:
-            break # No more accounts left
+        creds = get_google_credentials("drive_token", i)
+        folder_id = os.getenv(f"DRIVE_FOLDER_ID_{i}")
+        
+        if not creds or not folder_id:
+            continue
             
         try:
+            service = build('drive', 'v3', credentials=creds, cache_discovery=False)
             file_metadata = {'name': original_filename, 'parents': [folder_id]}
             media = MediaFileUpload(file_path, mimetype=mime_type, resumable=True)
+            
             file_data = service.files().create(
                 body=file_metadata, 
                 media_body=media, 
@@ -87,39 +97,16 @@ def upload_to_drive(file_path, mime_type, original_filename):
             print(f"Drive {i} failed (maybe full?): {e}")
             continue
             
-    raise Exception("All Google Drive accounts are full or misconfigured!")
-
-# --- YOUTUBE MULTI-ACCOUNT LOGIC ---
-def get_youtube_service(account_index=1):
-    json_path = f"youtube_client_{account_index}.json"
-    pickle_path = f"youtube_token_{account_index}.pickle"
-    
-    if not os.path.exists(json_path):
-        return None
-
-    creds = None
-    if os.path.exists(pickle_path):
-        with open(pickle_path, 'rb') as token:
-            creds = pickle.load(token)
-            
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(json_path, SCOPES_YOUTUBE)
-            creds = flow.run_local_server(port=0)
-        with open(pickle_path, 'wb') as token:
-            pickle.dump(creds, token)
-            
-    return build('youtube', 'v3', credentials=creds, cache_discovery=False)
+    raise Exception("All Google Drive accounts are full or missing credentials!")
 
 def upload_to_youtube(file_path, title, description):
     for i in range(1, 10):
-        youtube = get_youtube_service(i)
-        if not youtube:
-            break
+        creds = get_google_credentials("youtube_token", i)
+        if not creds:
+            continue
             
         try:
+            youtube = build('youtube', 'v3', credentials=creds, cache_discovery=False)
             body = {
                 'snippet': {
                     'title': title,
@@ -140,6 +127,7 @@ def upload_to_youtube(file_path, title, description):
             
     raise Exception("All YouTube accounts reached quota or are misconfigured!")
 
+# --- WEBSOCKET ENGINE ---
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
@@ -188,6 +176,7 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         manager.disconnect(websocket)
 
+# --- API ENDPOINTS ---
 class LoginRequest(BaseModel):
     username: str
     password: str
@@ -245,7 +234,7 @@ def get_memories(limit: int = 12, offset: int = 0):
 
 # THREAD-SAFE UPLOAD LOGIC
 def process_and_upload_media(memory_id, file_bytes, filename, content_type, album_title):
-    # 1. Save to temporary disk (Prevents server memory crashes on 500MB+ videos)
+    # Save to temp disk (Prevents server memory crashes on large files)
     with tempfile.NamedTemporaryFile(delete=False, suffix=f"_{filename}") as temp_file:
         temp_file.write(file_bytes)
         temp_path = temp_file.name
@@ -257,7 +246,7 @@ def process_and_upload_media(memory_id, file_bytes, filename, content_type, albu
         media_data = {}
         
         if is_video and file_size_mb > 100:
-            # Route to YouTube
+            # Route large videos to YouTube
             video_id = upload_to_youtube(temp_path, f"Memory {memory_id}: {album_title}", "Private Vault Video")
             media_data = {
                 "provider": "youtube",
@@ -265,21 +254,20 @@ def process_and_upload_media(memory_id, file_bytes, filename, content_type, albu
                 "url": f"https://www.youtube.com/watch?v={video_id}"
             }
         else:
-            # Route to Google Drive (Photos, Audio, Small Videos)
+            # Route everything else to Drive
             drive_file = upload_to_drive(temp_path, content_type, filename)
             media_data = {
                 "provider": "drive",
                 "id": drive_file.get('id'),
                 "original": drive_file.get('webContentLink'),
-                "thumb": drive_file.get('thumbnailLink', drive_file.get('webContentLink')).replace('=s220', '=s1000') # Request high-res WebP
+                "thumb": drive_file.get('thumbnailLink', drive_file.get('webContentLink')).replace('=s220', '=s1000')
             }
 
-        # Save smart JSON string to Supabase DB (No SQL migrations needed!)
+        # Save the smart JSON object!
         json_url = json.dumps(media_data)
         supabase.table("memory_media").insert({"memory_id": memory_id, "file_url": json_url}).execute()
         
     finally:
-        # 3. Clean up temp file
         os.remove(temp_path)
 
 @app.post("/api/memories")
@@ -301,7 +289,6 @@ async def create_memory(
         mem_resp = await asyncio.to_thread(insert_mem)
         memory_id = mem_resp.data[0]['id']
 
-        # Process all files asynchronously so server isn't blocked
         for file in files:
             file_bytes = await file.read()
             await asyncio.to_thread(process_and_upload_media, memory_id, file_bytes, file.filename, file.content_type, title)
@@ -318,8 +305,41 @@ def update_memory(memory_id: int, req: MemoryUpdate):
     supabase.table("memories").update({"description": req.description}).eq("id", memory_id).execute()
     return {"message": "Memory updated."}
 
+def delete_from_cloud(file_url_str):
+    try:
+        data = json.loads(file_url_str)
+        provider = data.get("provider")
+        file_id = data.get("id")
+        
+        if provider == "drive" and file_id:
+            for i in range(1, 10):
+                service, _ = get_drive_service(i)
+                if not service: break
+                try:
+                    service.files().delete(fileId=file_id).execute()
+                    return
+                except Exception:
+                    continue
+        elif provider == "youtube" and file_id:
+            for i in range(1, 10):
+                youtube = get_youtube_service(i)
+                if not youtube: break
+                try:
+                    youtube.videos().delete(id=file_id).execute()
+                    return
+                except Exception:
+                    continue
+    except Exception:
+        pass # Legacy format or parsing error
+
 @app.delete("/api/memories/{memory_id}")
 def delete_memory(memory_id: int):
+    # Reach into Google Cloud and physically delete the files first
+    media_resp = supabase.table("memory_media").select("file_url").eq("memory_id", memory_id).execute()
+    for media in media_resp.data:
+        delete_from_cloud(media['file_url'])
+        
+    # Then wipe the database entry
     supabase.table("memories").delete().eq("id", memory_id).execute()
     return {"message": "Memory deleted."}
 
@@ -338,8 +358,30 @@ async def add_media_to_memory(memory_id: int, files: List[UploadFile] = File(...
 
 @app.delete("/api/media/{media_id}")
 def delete_media(media_id: int):
+    # Reach into Google Cloud and physically delete the single file first
+    media_resp = supabase.table("memory_media").select("file_url").eq("id", media_id).execute()
+    if media_resp.data:
+        delete_from_cloud(media_resp.data[0]['file_url'])
+        
+    # Then wipe the database entry
     supabase.table("memory_media").delete().eq("id", media_id).execute()
     return {"message": "Media deleted."}
+
+@app.get("/api/media/proxy/{file_id}")
+def proxy_media(file_id: str):
+    # This acts as an invisible bridge to bypass Chrome's lazy-load blocks
+    url = f"https://drive.google.com/uc?export=download&id={file_id}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+    try:
+        response = urllib.request.urlopen(req)
+        def iterfile():
+            while True:
+                chunk = response.read(8192)
+                if not chunk: break
+                yield chunk
+        return StreamingResponse(iterfile(), media_type=response.headers.get('Content-Type', 'image/jpeg'))
+    except Exception:
+        raise HTTPException(status_code=404, detail="Image proxy failed")
 
 @app.get("/api/memories/{memory_id}/download")
 def download_album(memory_id: int):
@@ -349,11 +391,9 @@ def download_album(memory_id: int):
         with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
             for idx, media in enumerate(media_resp.data):
                 try:
-                    # Parse our smart JSON
                     media_data = json.loads(media['file_url'])
                     download_url = media_data.get('original', media_data.get('url'))
                 except:
-                    # Fallback for old Supabase URLs
                     download_url = media['file_url']
                     
                 if not download_url: continue
