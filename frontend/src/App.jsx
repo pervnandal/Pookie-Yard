@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-
 import { API_BASE_URL } from './utils/apiUtils';
 import { Icons } from './components/common/Icons';
 import Header from './components/common/Header';
@@ -40,15 +39,11 @@ export default function App() {
         const data = await response.json();
         const formattedData = data.map(item => ({ ...item, formattedDate: new Date(item.memory_date).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', timeZone: 'UTC' }) }));
         
-        if (data.length < ITEMS_PER_PAGE) {
-          setHasMore(false);
-        } else {
-          setHasMore(true);
-        }
+        if (data.length < ITEMS_PER_PAGE) setHasMore(false);
+        else setHasMore(true);
 
-        if (isRefresh || pageNum === 0) {
-          setMemories(formattedData);
-        } else {
+        if (isRefresh || pageNum === 0) setMemories(formattedData);
+        else {
           setMemories(prev => {
             const existingIds = new Set(prev.map(m => m.id));
             const newItems = formattedData.filter(m => !existingIds.has(m.id));
@@ -69,9 +64,7 @@ export default function App() {
     }
   };
 
-  const handleRefreshMemories = () => {
-    fetchMemories(0, true);
-  };
+  const handleRefreshMemories = () => fetchMemories(0, true);
 
   useEffect(() => { if (isAuthenticated) handleRefreshMemories(); }, [isAuthenticated]);
 
@@ -105,10 +98,12 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen w-full bg-[#faf9f8] font-sans selection:bg-rose-200 selection:text-rose-900 flex flex-col relative">
-      <div className="fixed top-[-10%] left-[-10%] rounded-full mix-blend-multiply opacity-60 z-[-1] pointer-events-none" style={{ backgroundColor: '#fecdd3', width: '500px', height: '500px', filter: 'blur(100px)' }}></div>
-      <div className="fixed top-[20%] right-[-10%] rounded-full mix-blend-multiply opacity-60 z-[-1] pointer-events-none" style={{ backgroundColor: '#ffedd5', width: '400px', height: '400px', filter: 'blur(100px)' }}></div>
-      <div className="fixed bottom-[-10%] left-[20%] rounded-full mix-blend-multiply opacity-50 z-[-1] pointer-events-none" style={{ backgroundColor: '#fbcfe8', width: '600px', height: '600px', filter: 'blur(120px)' }}></div>
+    <div className="min-h-screen w-full bg-[#fdfcfb] font-sans selection:bg-rose-200 selection:text-rose-900 flex flex-col relative z-0 overflow-x-hidden">
+      
+      {/* THE ANIMATED GLASS ORBS */}
+      <div className="fixed top-[-10%] left-[-10%] rounded-full mix-blend-multiply opacity-60 z-[-1] pointer-events-none animate-[pulse_8s_ease-in-out_infinite]" style={{ backgroundColor: '#fecdd3', width: '500px', height: '500px', filter: 'blur(100px)' }}></div>
+      <div className="fixed top-[20%] right-[-10%] rounded-full mix-blend-multiply opacity-60 z-[-1] pointer-events-none animate-[pulse_10s_ease-in-out_infinite_alternate]" style={{ backgroundColor: '#ffedd5', width: '400px', height: '400px', filter: 'blur(100px)' }}></div>
+      <div className="fixed bottom-[-10%] left-[20%] rounded-full mix-blend-multiply opacity-50 z-[-1] pointer-events-none animate-[pulse_12s_ease-in-out_infinite]" style={{ backgroundColor: '#fbcfe8', width: '600px', height: '600px', filter: 'blur(120px)' }}></div>
       <div className="fixed inset-0 z-[-1] pointer-events-none" style={{ opacity: 0.4, backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(0,0,0,0.08) 1px, transparent 0)', backgroundSize: '32px 32px' }}></div>
 
       <Header onAddClick={() => setIsAddModalOpen(true)} activeTab={activeTab} setActiveTab={setActiveTab} onLogout={() => { localStorage.removeItem('us_auth'); setIsAuthenticated(false); }} />
@@ -118,10 +113,7 @@ export default function App() {
           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-32">
             <div className="text-center mb-16 relative z-10">
               <h2 className="text-5xl font-serif text-stone-800 mb-4 tracking-tight drop-shadow-sm">Our Memory Vault</h2>
-              <p className="text-stone-600 max-w-2xl mx-auto text-lg">
-                A secure collection of our favorite days, biggest adventures, and quietest moments. 
-                Click any memory to dive into the gallery.
-              </p>
+              <p className="text-stone-600 max-w-2xl mx-auto text-lg drop-shadow-sm">A secure collection of our favorite days, biggest adventures, and quietest moments.</p>
             </div>
 
             {isLoading && page === 0 ? (
@@ -129,10 +121,9 @@ export default function App() {
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-rose-500"></div>
               </div>
             ) : memories.length === 0 ? (
-              <div className="text-center py-20 text-stone-500 bg-white/50 backdrop-blur-sm rounded-3xl border border-stone-100 p-12 shadow-sm max-w-2xl mx-auto relative z-10">
+              <div className="text-center py-20 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-12 shadow-lg max-w-2xl mx-auto relative z-10">
                 <span className="text-6xl mb-4 block">📸</span>
                 <p className="text-xl font-medium text-stone-700">Your vault is waiting.</p>
-                <p className="mt-2 text-stone-500">Click "+ Add Memory" to create your first smart album.</p>
               </div>
             ) : (
               <>
@@ -141,14 +132,7 @@ export default function App() {
                 </div>
                 {hasMore && (
                   <div className="flex justify-center mt-12 relative z-10">
-                    <button 
-                      onClick={() => {
-                        const nextPage = page + 1;
-                        setPage(nextPage);
-                        fetchMemories(nextPage, false);
-                      }}
-                      className="bg-white md:hover:bg-stone-50 text-stone-800 border border-stone-200 px-8 py-3 rounded-full font-medium transition-all shadow-sm md:hover:shadow-md flex items-center gap-2"
-                    >
+                    <button onClick={() => { const nextPage = page + 1; setPage(nextPage); fetchMemories(nextPage, false); }} className="bg-white/70 backdrop-blur-md hover:bg-white text-stone-800 border border-white/60 px-8 py-3 rounded-full font-medium transition-all shadow-md hover:shadow-lg flex items-center gap-2">
                       <Icons.Refresh /> Load More Memories
                     </button>
                   </div>
@@ -172,17 +156,7 @@ export default function App() {
       </main>
 
       <AddMemoryModal isOpen={isAddModalOpen} onClose={() => setIsAddModalOpen(false)} onMemoryAdded={handleRefreshMemories} showDialog={showDialog} />
-      
-      <FullPageGallery 
-         isOpen={!!selectedMemory} 
-         onClose={() => setSelectedMemory(null)} 
-         memory={selectedMemory} 
-         memories={memories}
-         onSelectMemory={setSelectedMemory}
-         onMemoryUpdated={handleRefreshMemories} 
-         showDialog={showDialog} 
-      />
-      
+      <FullPageGallery isOpen={!!selectedMemory} onClose={() => setSelectedMemory(null)} memory={selectedMemory} memories={memories} onSelectMemory={setSelectedMemory} onMemoryUpdated={handleRefreshMemories} showDialog={showDialog} />
       <CustomDialog {...dialogConfig} onCancel={closeDialog} onConfirm={() => { dialogConfig.onConfirm(dialogConfig.inputValue); closeDialog(); }} onInputChange={handleDialogInput} />
       <PookieWidget memories={memories} onSelectMemory={setSelectedMemory} isGalleryOpen={!!selectedMemory} />
     </div>

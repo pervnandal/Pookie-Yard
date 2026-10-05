@@ -124,7 +124,7 @@ export const ChronicleView = ({ showDialog, onOpenMemory }) => {
   };
 
   return (
-    <div className="max-w-5xl mx-auto bg-[#f9f7f1] p-6 sm:p-12 shadow-2xl text-stone-900 font-serif relative border border-stone-300 min-h-[70vh]">
+    <div className="max-w-5xl mx-auto bg-white/50 backdrop-blur-2xl p-6 sm:p-12 shadow-2xl rounded-3xl text-stone-900 font-serif relative border border-white/60 min-h-[70vh]">
       <div className="text-center border-b-[6px] border-double border-stone-900 pb-6 mb-8 relative">
         <h1 className="text-5xl sm:text-7xl font-bold tracking-tighter uppercase mb-4 text-stone-900" style={{ fontFamily: '"Playfair Display", Georgia, serif' }}>
           The Daily Chronicle

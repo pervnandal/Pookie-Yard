@@ -42,3 +42,21 @@ def update_itinerary(doc_id: int, req: ItineraryUpdate):
 def delete_itinerary(doc_id: int):
     supabase.table("itineraries").delete().eq("id", doc_id).execute()
     return {"success": True}
+
+class ChatMessage(BaseModel):
+    sender_id: str
+    text: str
+    audio: str = ""
+    timestamp: str
+
+@router.post("/chats")
+def save_chat(req: ChatMessage):
+    if not supabase: 
+        return {"success": False}
+    resp = supabase.table("chat_messages").insert({
+        "sender_id": req.sender_id,
+        "text": req.text,
+        "audio": req.audio,
+        "timestamp": req.timestamp
+    }).execute()
+    return resp.data[0] if resp.data else {"success": True}
