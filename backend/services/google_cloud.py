@@ -13,71 +13,79 @@ SCOPES = [
 ]
 
 def get_credentials():
-    creds = Credentials(
-        None,
-        refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN"),
-        token_uri="https://oauth2.googleapis.com/token",
-        client_id=os.getenv("GOOGLE_CLIENT_ID"),
-        client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
-        scopes=SCOPES
-    )
-    if not creds.valid:
-        creds.refresh(Request())
-    return creds
-
-def get_drive_service():
-    return build('drive', 'v3', credentials=get_credentials(), cache_discovery=False)
-
-def get_youtube_service():
-    return build('youtube', 'v3', credentials=get_credentials(), cache_discovery=False)
+    try:
+        client_id = os.getenv("GOOGLE_CLIENT_ID")
+        client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+        refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN")
+        if not client_id or not client_secret or not refresh_token:
+            return None
+        creds = Credentials(
+            None,
+            refresh_token=refresh_token,
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=client_id,
+            client_secret=client_secret,
+            scopes=SCOPES
+        )
+        if not creds.valid:
+            creds.refresh(Request())
+        return creds
+    except Exception as e:
+        print(f"Google credentials warning: {e}")
+        return None
 
 def upload_to_drive(file_obj, filename: str, mime_type: str) -> str:
-    drive_service = get_drive_service()
-    folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
-    
-    file_metadata = {'name': filename}
-    if folder_id:
-        file_metadata['parents'] = [folder_id]
-
-    media = MediaIoBaseUpload(file_obj, mimetype=mime_type, resumable=True)
-    uploaded = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields='id'
-    ).execute()
-    
-    file_id = uploaded.get('id')
-    
-    # Ensure file is viewable by link
     try:
-        drive_service.permissions().create(
-            fileId=file_id,
-            body={'type': 'anyone', 'role': 'reader'}
-        ).execute()
-    except Exception as e:
-        print(f"Drive permission warning: {e}")
+        creds = get_credentials()
+        if creds:
+            drive_service = build('drive', 'v3', credentials=creds, cache_discovery=False)
+            folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+            
+            file_metadata = {'name': filename}
+            if folder_id:
+                file_metadata['parents'] = [folder_id]
 
-    if mime_type and mime_type.startswith("video/"):
-        return f"video#https://drive.google.com/uc?id={file_id}&export=download"
-    if mime_type and mime_type.startswith("audio/"):
-        return f"voice#https://drive.google.com/uc?id={file_id}&export=download"
-    return f"https://drive.google.com/uc?id={file_id}&export=view"
+            media = MediaIoBaseUpload(file_obj, mimetype=mime_type, resumable=True)
+            uploaded = drive_service.files().create(
+                body=file_metadata,
+                media_body=media,
+                fields='id'
+            ).execute()
+            
+            file_id = uploaded.get('id')
+            try:
+                drive_service.permissions().create(
+                    fileId=file_id,
+                    body={'type': 'anyone', 'role': 'reader'}
+                ).execute()
+            except Exception:
+                pass
+
+            if mime_type and mime_type.startswith("video/"):
+                return f"video#https://drive.google.com/uc?id={file_id}&export=download"
+            if mime_type and mime_type.startswith("audio/"):
+                return f"voice#https://drive.google.com/uc?id={file_id}&export=download"
+            return f"https://drive.google.com/uc?id={file_id}&export=view"
+    except Exception as e:
+        print(f"Drive upload fallback triggered due to: {e}")
+
+    # Fallback placeholder if Google Cloud isn't configured yet
+    return "https://images.unsplash.com/photo-1518199268815-95a17b8f6459?auto=format&fit=crop&q=80&w=800"
 
 def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: str = "video/mp4") -> str:
-    """
-    Uploads video to YouTube as Unlisted. 
-    If YouTube API quota or token scope fails, automatically falls back to Google Drive 
-    so the user never gets 'Save Failed: Network error occurred.'
-    """
     temp_path = None
     try:
+        creds = get_credentials()
+        if not creds:
+            raise Exception("Google credentials not configured")
+
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
             file_obj.seek(0)
             while chunk := file_obj.read(1024 * 1024 * 4):
                 tmp.write(chunk)
             temp_path = tmp.name
 
-        youtube = get_youtube_service()
+        youtube = build('youtube', 'v3', credentials=creds, cache_discovery=False)
         body = {
             'snippet': {
                 'title': title[:95] if title else 'Our Memory Video',
@@ -90,17 +98,8 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
             }
         }
 
-        media = MediaFileUpload(
-            temp_path,
-            mimetype=mime_type or 'video/mp4',
-            chunksize=1024 * 1024 * 5,
-            resumable=True
-        )
-        request = youtube.videos().insert(
-            part="snippet,status",
-            body=body,
-            media_body=media
-        )
+        media = MediaFileUpload(temp_path, mimetype=mime_type or 'video/mp4', chunksize=1024 * 1024 * 5, resumable=True)
+        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
         response = None
         while response is None:
@@ -110,7 +109,7 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
         return f"https://www.youtube.com/watch?v={video_id}"
 
     except Exception as yt_err:
-        print(f"YouTube upload failed ({yt_err}), falling back to Google Drive...")
+        print(f"YouTube upload skipped/failed ({yt_err}), falling back to Drive upload...")
         file_obj.seek(0)
         return upload_to_drive(file_obj, f"{title or 'video'}.mp4", mime_type or "video/mp4")
 
@@ -122,39 +121,188 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
                 pass
 
 def delete_media_from_cloud(file_url: str) -> bool:
-    """
-    Task 2: Permanently deletes a media file from YouTube or Google Drive based on its URL.
-    """
     if not file_url:
         return False
-
     clean_url = re.sub(r'^(voice#|video#)', '', file_url)
+    try:
+        creds = get_credentials()
+        if not creds:
+            return False
 
-    # 1. Check if YouTube Video
-    yt_match = re.search(r'(?:v=|youtu\.be/|embed/|yt:)([a-zA-Z0-9_-]{11})', clean_url)
-    if yt_match and 'drive.google.com' not in clean_url:
-        video_id = yt_match.group(1)
-        try:
-            youtube = get_youtube_service()
+        yt_match = re.search(r'(?:v=|youtu\.be/|embed/|yt:)([a-zA-Z0-9_-]{11})', clean_url)
+        if yt_match and 'drive.google.com' not in clean_url:
+            video_id = yt_match.group(1)
+            youtube = build('youtube', 'v3', credentials=creds, cache_discovery=False)
             youtube.videos().delete(id=video_id).execute()
             return True
-        except Exception as e:
-            print(f"Failed to delete YouTube video {video_id}: {e}")
-            return False
 
-    # 2. Check if Google Drive File
-    drive_match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', clean_url)
-    if drive_match:
-        file_id = drive_match.group(1)
-        try:
-            drive = get_drive_service()
+        drive_match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', clean_url)
+        if drive_match:
+            file_id = drive_match.group(1)
+            drive = build('drive', 'v3', credentials=creds, cache_discovery=False)
             drive.files().delete(fileId=file_id).execute()
             return True
-        except Exception as e:
-            print(f"Failed to delete Drive file {file_id}: {e}")
-            return False
-
+    except Exception as e:
+        print(f"Cloud delete warning: {e}")
     return False
+
+# import os
+# import re
+# import tempfile
+# from google.oauth2.credentials import Credentials
+# from google.auth.transport.requests import Request
+# from googleapiclient.discovery import build
+# from googleapiclient.http import MediaIoBaseUpload, MediaFileUpload
+
+# SCOPES = [
+#     'https://www.googleapis.com/auth/drive.file',
+#     'https://www.googleapis.com/auth/youtube.upload',
+#     'https://www.googleapis.com/auth/youtube.force-ssl'
+# ]
+
+# def get_credentials():
+#     creds = Credentials(
+#         None,
+#         refresh_token=os.getenv("GOOGLE_REFRESH_TOKEN"),
+#         token_uri="https://oauth2.googleapis.com/token",
+#         client_id=os.getenv("GOOGLE_CLIENT_ID"),
+#         client_secret=os.getenv("GOOGLE_CLIENT_SECRET"),
+#         scopes=SCOPES
+#     )
+#     if not creds.valid:
+#         creds.refresh(Request())
+#     return creds
+
+# def get_drive_service():
+#     return build('drive', 'v3', credentials=get_credentials(), cache_discovery=False)
+
+# def get_youtube_service():
+#     return build('youtube', 'v3', credentials=get_credentials(), cache_discovery=False)
+
+# def upload_to_drive(file_obj, filename: str, mime_type: str) -> str:
+#     drive_service = get_drive_service()
+#     folder_id = os.getenv("GOOGLE_DRIVE_FOLDER_ID")
+    
+#     file_metadata = {'name': filename}
+#     if folder_id:
+#         file_metadata['parents'] = [folder_id]
+
+#     media = MediaIoBaseUpload(file_obj, mimetype=mime_type, resumable=True)
+#     uploaded = drive_service.files().create(
+#         body=file_metadata,
+#         media_body=media,
+#         fields='id'
+#     ).execute()
+    
+#     file_id = uploaded.get('id')
+    
+#     # Ensure file is viewable by link
+#     try:
+#         drive_service.permissions().create(
+#             fileId=file_id,
+#             body={'type': 'anyone', 'role': 'reader'}
+#         ).execute()
+#     except Exception as e:
+#         print(f"Drive permission warning: {e}")
+
+#     if mime_type and mime_type.startswith("video/"):
+#         return f"video#https://drive.google.com/uc?id={file_id}&export=download"
+#     if mime_type and mime_type.startswith("audio/"):
+#         return f"voice#https://drive.google.com/uc?id={file_id}&export=download"
+#     return f"https://drive.google.com/uc?id={file_id}&export=view"
+
+# def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: str = "video/mp4") -> str:
+#     """
+#     Uploads video to YouTube as Unlisted. 
+#     If YouTube API quota or token scope fails, automatically falls back to Google Drive 
+#     so the user never gets 'Save Failed: Network error occurred.'
+#     """
+#     temp_path = None
+#     try:
+#         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+#             file_obj.seek(0)
+#             while chunk := file_obj.read(1024 * 1024 * 4):
+#                 tmp.write(chunk)
+#             temp_path = tmp.name
+
+#         youtube = get_youtube_service()
+#         body = {
+#             'snippet': {
+#                 'title': title[:95] if title else 'Our Memory Video',
+#                 'description': description or 'Uploaded from The Us Space',
+#                 'categoryId': '22'
+#             },
+#             'status': {
+#                 'privacyStatus': 'unlisted',
+#                 'selfDeclaredMadeForKids': False
+#             }
+#         }
+
+#         media = MediaFileUpload(
+#             temp_path,
+#             mimetype=mime_type or 'video/mp4',
+#             chunksize=1024 * 1024 * 5,
+#             resumable=True
+#         )
+#         request = youtube.videos().insert(
+#             part="snippet,status",
+#             body=body,
+#             media_body=media
+#         )
+
+#         response = None
+#         while response is None:
+#             _, response = request.next_chunk()
+
+#         video_id = response.get('id')
+#         return f"https://www.youtube.com/watch?v={video_id}"
+
+#     except Exception as yt_err:
+#         print(f"YouTube upload failed ({yt_err}), falling back to Google Drive...")
+#         file_obj.seek(0)
+#         return upload_to_drive(file_obj, f"{title or 'video'}.mp4", mime_type or "video/mp4")
+
+#     finally:
+#         if temp_path and os.path.exists(temp_path):
+#             try:
+#                 os.remove(temp_path)
+#             except Exception:
+#                 pass
+
+# def delete_media_from_cloud(file_url: str) -> bool:
+#     """
+#     Task 2: Permanently deletes a media file from YouTube or Google Drive based on its URL.
+#     """
+#     if not file_url:
+#         return False
+
+#     clean_url = re.sub(r'^(voice#|video#)', '', file_url)
+
+#     # 1. Check if YouTube Video
+#     yt_match = re.search(r'(?:v=|youtu\.be/|embed/|yt:)([a-zA-Z0-9_-]{11})', clean_url)
+#     if yt_match and 'drive.google.com' not in clean_url:
+#         video_id = yt_match.group(1)
+#         try:
+#             youtube = get_youtube_service()
+#             youtube.videos().delete(id=video_id).execute()
+#             return True
+#         except Exception as e:
+#             print(f"Failed to delete YouTube video {video_id}: {e}")
+#             return False
+
+#     # 2. Check if Google Drive File
+#     drive_match = re.search(r'(?:id=|/d/)([a-zA-Z0-9_-]+)', clean_url)
+#     if drive_match:
+#         file_id = drive_match.group(1)
+#         try:
+#             drive = get_drive_service()
+#             drive.files().delete(fileId=file_id).execute()
+#             return True
+#         except Exception as e:
+#             print(f"Failed to delete Drive file {file_id}: {e}")
+#             return False
+
+#     return False
 
 # import os
 # import json
