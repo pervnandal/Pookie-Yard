@@ -1,26 +1,70 @@
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-export const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+export const WS_BASE_URL = API_BASE_URL.replace(/^http/, 'ws');
 
-export const uploadFilesWithProgress = (url, formData, setProgress, onSuccess, onError) => {
+export const uploadFilesWithProgress = (url, formData, onProgress, onSuccess, onError) => {
   const xhr = new XMLHttpRequest();
   xhr.open('POST', url, true);
+  // 15-minute timeout for large video uploads to YouTube/Drive
+  xhr.timeout = 15 * 60 * 1000;
+
   xhr.upload.onprogress = (event) => {
-    if (event.lengthComputable) {
+    if (event.lengthComputable && onProgress) {
       const percent = Math.round((event.loaded / event.total) * 100);
-      setProgress(percent);
+      onProgress(percent);
     }
   };
+
   xhr.onload = () => {
     if (xhr.status >= 200 && xhr.status < 300) {
-      onSuccess(JSON.parse(xhr.responseText));
+      try {
+        onSuccess(JSON.parse(xhr.responseText));
+      } catch {
+        onSuccess({});
+      }
     } else {
       try {
-        onError(JSON.parse(xhr.responseText));
-      } catch (e) {
-        onError({ detail: "Upload failed" });
+        const err = JSON.parse(xhr.responseText);
+        onError(err);
+      } catch {
+        onError({ detail: `Server error (${xhr.status}). Please try again.` });
       }
     }
   };
-  xhr.onerror = () => onError({ detail: "Network error occurred." });
+
+  xhr.ontimeout = () => {
+    onError({ detail: 'Upload timed out. Please check your connection or try a smaller video.' });
+  };
+
+  xhr.onerror = () => {
+    onError({ detail: 'Connection interrupted during upload. Check if backend server is running.' });
+  };
+
   xhr.send(formData);
 };
+
+// export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// export const WS_BASE_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8000';
+
+// export const uploadFilesWithProgress = (url, formData, setProgress, onSuccess, onError) => {
+//   const xhr = new XMLHttpRequest();
+//   xhr.open('POST', url, true);
+//   xhr.upload.onprogress = (event) => {
+//     if (event.lengthComputable) {
+//       const percent = Math.round((event.loaded / event.total) * 100);
+//       setProgress(percent);
+//     }
+//   };
+//   xhr.onload = () => {
+//     if (xhr.status >= 200 && xhr.status < 300) {
+//       onSuccess(JSON.parse(xhr.responseText));
+//     } else {
+//       try {
+//         onError(JSON.parse(xhr.responseText));
+//       } catch (e) {
+//         onError({ detail: "Upload failed" });
+//       }
+//     }
+//   };
+//   xhr.onerror = () => onError({ detail: "Network error occurred." });
+//   xhr.send(formData);
+// };
