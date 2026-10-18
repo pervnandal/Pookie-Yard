@@ -23,7 +23,6 @@ export default function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedMemory, setSelectedMemory] = useState(null);
 
-  // Instant 0ms load from browser localStorage cache
   const [memories, setMemories] = useState(() => {
     try {
       const cached = localStorage.getItem(MEMORIES_CACHE_KEY);
@@ -33,7 +32,6 @@ export default function App() {
     }
   });
 
-  // Supports 'YYYY' (year filter), 'YYYY-MM' (month filter), or 'YYYY-MM-DD' (exact date filter)
   const [selectedDateFilter, setSelectedDateFilter] = useState(null);
   const [isLoading, setIsLoading] = useState(() => {
     try {
@@ -69,7 +67,6 @@ export default function App() {
   });
   const ITEMS_PER_PAGE = 24;
 
-  // Enforce "The Us Space" browser tab title and 🌸 flower favicon
   useEffect(() => {
     document.title = 'The Us Space';
     const flowerSvg =
@@ -118,7 +115,6 @@ export default function App() {
     return matched || null;
   }, [occasions, manualOccasion]);
 
-  // Background pre-caching of album thumbnails into browser HTTP cache
   useEffect(() => {
     if (!memories.length) return;
     const timer = setTimeout(() => {
@@ -194,13 +190,11 @@ export default function App() {
     if (isAuthenticated) handleRefreshMemories();
   }, [isAuthenticated]);
 
-  // Supports filtering by full Year ("2026"), Year-Month ("2026-10"), or exact Date ("2026-10-18")
   const displayedMemories = useMemo(() => {
     if (!selectedDateFilter) return memories;
     return memories.filter((m) => m.memory_date && m.memory_date.startsWith(selectedDateFilter));
   }, [memories, selectedDateFilter]);
 
-  // Group displayed memories by Year (sorted newest year first)
   const memoriesGroupedByYear = useMemo(() => {
     const groups = new Map();
     displayedMemories.forEach((mem) => {
@@ -210,6 +204,45 @@ export default function App() {
     });
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [displayedMemories]);
+
+  // Edit Album Name Handler
+  const handleRenameAlbum = (memory) => {
+    showDialog({
+      type: 'confirm',
+      title: 'Edit Album Name',
+      message: 'Enter a new name for this album:',
+      showInput: true,
+      inputValue: memory.title || '',
+      onConfirm: async (newTitle) => {
+        const trimmed = (newTitle || '').trim();
+        if (!trimmed || trimmed === memory.title) return;
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/memories/${memory.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: trimmed })
+          });
+          if (response.ok) {
+            setMemories((prev) => {
+              const updated = prev.map((m) => (m.id === memory.id ? { ...m, title: trimmed } : m));
+              try {
+                localStorage.setItem(MEMORIES_CACHE_KEY, JSON.stringify(updated));
+              } catch {}
+              return updated;
+            });
+            if (selectedMemory?.id === memory.id) {
+              setSelectedMemory((prev) => (prev ? { ...prev, title: trimmed } : null));
+            }
+          } else {
+            const err = await response.json().catch(() => ({}));
+            showDialog({ type: 'alert', title: 'Rename Failed', message: err.detail || 'Could not rename album.' });
+          }
+        } catch {
+          showDialog({ type: 'alert', title: 'Error', message: 'Could not connect to backend.' });
+        }
+      }
+    });
+  };
 
   const handleDeleteAlbum = (memory) => {
     showDialog({
@@ -285,15 +318,15 @@ export default function App() {
         }}
       />
 
-      {/* Side Floating Dock (On Mobile: also includes the + Add Memory button so the top bar isn't congested) */}
+      {/* Side Floating Dock */}
       {activeTab === 'vault' && (
         <div className="fixed left-4 sm:left-6 bottom-5 sm:bottom-auto sm:top-28 z-40 flex flex-row sm:flex-col items-center gap-3">
-          {/* Mobile-Only + Add Memory Quick Action Button */}
+          {/* Mobile-Only + Add Memory Button */}
           <button
             type="button"
             onClick={() => setIsAddModalOpen(true)}
             title="Add New Memory"
-            className="sm:hidden w-11 h-11 rounded-full bg-stone-900 hover:bg-stone-800 text-white shadow-lg flex items-center justify-center border border-white/20 active:scale-95 transition-transform"
+            className="md:hidden w-11 h-11 rounded-full bg-stone-900 hover:bg-stone-800 text-white shadow-lg flex items-center justify-center border border-white/20 active:scale-95 transition-transform"
           >
             <Icons.Plus />
           </button>
@@ -361,8 +394,8 @@ export default function App() {
         {activeTab === 'vault' && (
           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-8 sm:py-10 pb-32">
             <div className="text-center mb-10 sm:mb-12 relative z-10">
-              {/* Mobile-Only Days Together Pill (Unclutters top navbar while looking intentional above the title) */}
-              <div className="sm:hidden inline-flex items-center gap-1.5 bg-white/75 backdrop-blur-md px-3.5 py-1 rounded-full border border-white/80 shadow-sm mb-3">
+              {/* Mobile-Only Days Together Pill */}
+              <div className="md:hidden inline-flex items-center gap-1.5 bg-white/75 backdrop-blur-md px-3.5 py-1 rounded-full border border-white/80 shadow-sm mb-3">
                 <span className="text-rose-500 animate-pulse text-xs">❤️</span>
                 <span className="text-xs font-bold text-rose-600 font-sans tracking-wide">
                   {daysTogether} Days Together
@@ -376,7 +409,6 @@ export default function App() {
                 A secure collection of our favorite days, biggest adventures, and quietest moments.
               </p>
 
-              {/* Active Calendar Filter Pill */}
               {selectedDateFilter && (
                 <div className="mt-4 flex justify-center">
                   <button
@@ -406,11 +438,9 @@ export default function App() {
               </div>
             ) : (
               <>
-                {/* YEAR-GROUPED SECTIONS (Matches your sketch: Year + horizontal line, then albums below) */}
                 <div className="space-y-16 relative z-10">
                   {memoriesGroupedByYear.map(([yearLabel, yearMemories]) => (
                     <section key={yearLabel} className="w-full">
-                      {/* Year Header + Horizontal Line */}
                       <div className="flex items-center gap-4 mb-8 px-2">
                         <h3 className="text-2xl sm:text-3xl font-serif font-bold text-stone-800 tracking-tight shrink-0">
                           {yearLabel}
@@ -418,7 +448,6 @@ export default function App() {
                         <div className="h-[2px] flex-1 bg-gradient-to-r from-stone-400/70 via-stone-300/50 to-transparent rounded-full" />
                       </div>
 
-                      {/* Albums Row / Grid for this Year */}
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-x-10 gap-y-12 justify-items-center">
                         {yearMemories.map((memory, idx) => (
                           <MemoryCard
@@ -426,6 +455,7 @@ export default function App() {
                             index={idx}
                             memory={memory}
                             onClick={(mem) => setSelectedMemory(mem)}
+                            onRenameClick={handleRenameAlbum}
                             onDeleteClick={handleDeleteAlbum}
                           />
                         ))}

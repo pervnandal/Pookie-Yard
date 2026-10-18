@@ -1,3 +1,4 @@
+import gc
 import io
 import os
 import re
@@ -47,19 +48,26 @@ class UpdateMemoryRequest(BaseModel):
 
 
 def _background_warm_cache(memories_list: list):
-    """Silently pre-warms thumbnails on disk in the background so folders and galleries open in 0ms."""
     for mem in memories_list[:6]:
-        for media in (mem.get("memory_media") or [])[:12]:
+        for media in (mem.get("memory_media") or [])[:8]:
             raw_url = media.get("file_url", "")
             if raw_url.startswith(("voice#", "video#")) or "youtube.com" in raw_url:
                 continue
             m = re.search(r"(?:id=|/d/|drive-image/)([a-zA-Z0-9_-]+)", raw_url)
             if m:
-                fid = m.group(1)
                 try:
-                    fetch_drive_file_bytes(fid, size="thumb")
+                    fetch_drive_file_bytes(m.group(1), size="thumb")
                 except Exception:
                     pass
+
+
+def _upload_single_file_sync(f: UploadFile, title: str, description: str, drive_service) -> Optional[str]:
+    """Uploads a single SpooledTemporaryFile directly without loading it into RAM."""
+    mime = (f.content_type or "").lower()
+    fname = f.filename or "memory_file"
+    if mime.startswith("video/") or fname.lower().endswith((".mp4", ".mov", ".webm", ".mkv")):
+        return upload_to_youtube(f.file, title=f"{title} - {fname}", description=description, mime_type=mime or "video/mp4")
+    return upload_to_drive(f.file, filename=fname, mime_type=mime or "image/jpeg", drive_service=drive_service)
 
 
 @router.get("/drive-image/{file_id}")
@@ -141,25 +149,19 @@ async def create_memory(
 
         memory_id = mem_resp.data[0]["id"]
         media_records = []
-        drive_service = get_drive_service() if files else None
+        drive_service = await asyncio.to_thread(get_drive_service) if files else None
 
         for f in files:
-            content = await f.read()
-            if not content:
+            if not f.filename:
                 continue
-            file_obj = io.BytesIO(content)
-            mime = (f.content_type or "").lower()
-            fname = f.filename or "memory_file"
-
-            if mime.startswith("video/") or fname.lower().endswith((".mp4", ".mov", ".webm", ".mkv")):
-                file_url = upload_to_youtube(file_obj, title=f"{title} - {fname}", description=description, mime_type=mime or "video/mp4")
-            else:
-                file_url = upload_to_drive(file_obj, filename=fname, mime_type=mime or "image/jpeg", drive_service=drive_service)
-
-            media_records.append({
-                "memory_id": memory_id,
-                "file_url": file_url
-            })
+            file_url = await asyncio.to_thread(_upload_single_file_sync, f, title, description, drive_service)
+            await f.close()
+            if file_url:
+                media_records.append({
+                    "memory_id": memory_id,
+                    "file_url": file_url
+                })
+            gc.collect()
 
         if media_records:
             supabase.table("memory_media").insert(media_records).execute()
@@ -185,25 +187,19 @@ async def add_media_to_memory(memory_id: str, files: List[UploadFile] = File(...
         desc = mem.data[0].get("description", "") if mem.data else ""
 
         media_records = []
-        drive_service = get_drive_service() if files else None
+        drive_service = await asyncio.to_thread(get_drive_service) if files else None
 
         for f in files:
-            content = await f.read()
-            if not content:
+            if not f.filename:
                 continue
-            file_obj = io.BytesIO(content)
-            mime = (f.content_type or "").lower()
-            fname = f.filename or "memory_file"
-
-            if mime.startswith("video/") or fname.lower().endswith((".mp4", ".mov", ".webm", ".mkv")):
-                file_url = upload_to_youtube(file_obj, title=f"{title} - {fname}", description=desc, mime_type=mime or "video/mp4")
-            else:
-                file_url = upload_to_drive(file_obj, filename=fname, mime_type=mime or "image/jpeg", drive_service=drive_service)
-
-            media_records.append({
-                "memory_id": memory_id,
-                "file_url": file_url
-            })
+            file_url = await asyncio.to_thread(_upload_single_file_sync, f, title, desc, drive_service)
+            await f.close()
+            if file_url:
+                media_records.append({
+                    "memory_id": memory_id,
+                    "file_url": file_url
+                })
+            gc.collect()
 
         if media_records:
             supabase.table("memory_media").insert(media_records).execute()

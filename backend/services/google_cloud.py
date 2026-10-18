@@ -1,6 +1,9 @@
+import gc
 import io
 import os
 import re
+import time
+import shutil
 import tempfile
 import threading
 import requests
@@ -11,12 +14,6 @@ from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseUpload, MediaFileUpload
 
-try:
-    from PIL import Image, ImageOps
-    HAS_PILLOW = True
-except ImportError:
-    HAS_PILLOW = False
-
 load_dotenv()
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +21,7 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 DISK_CACHE_DIR = os.path.join(BASE_DIR, ".media_cache")
 os.makedirs(DISK_CACHE_DIR, exist_ok=True)
 
-# Persistent HTTP connection pool for ultra-fast concurrent Google Drive transfers
+# Persistent HTTP connection pool for fast Google Drive API calls
 _http_session = requests.Session()
 _adapter = HTTPAdapter(pool_connections=32, pool_maxsize=32, max_retries=2)
 _http_session.mount("https://", _adapter)
@@ -33,9 +30,9 @@ _http_session.mount("http://", _adapter)
 _creds_lock = threading.Lock()
 _cached_creds = {}
 
-# Hot RAM cache for thumbnails & previews: key -> (bytes, mime_type, filename)
+# Lightweight RAM cache ONLY for small thumbnails (< 300KB each)
 _ram_cache = {}
-MAX_RAM_CACHE_ITEMS = 150
+MAX_RAM_CACHE_ITEMS = 80
 
 
 def find_token_file(filename: str) -> str:
@@ -59,7 +56,6 @@ def find_token_file(filename: str) -> str:
 
 
 def load_credentials(token_filename: str) -> Credentials:
-    """Keeps credentials in RAM and only touches disk when refreshing an expired token."""
     with _creds_lock:
         creds = _cached_creds.get(token_filename)
         if creds is None:
@@ -118,18 +114,21 @@ def _meta_cache_path(file_id: str) -> str:
 
 def _save_to_caches(file_id: str, size: str, data: bytes, mime_type: str, filename: str):
     cache_key = f"{file_id}:{size}"
-    if len(data) < 8 * 1024 * 1024:
+    # Only keep small thumbnails in RAM so Render never runs out of memory
+    if size == "thumb" and len(data) < 350 * 1024:
         if len(_ram_cache) >= MAX_RAM_CACHE_ITEMS:
             _ram_cache.pop(next(iter(_ram_cache)), None)
         _ram_cache[cache_key] = (data, mime_type, filename)
 
-    try:
-        with open(_disk_cache_path(file_id, size), "wb") as f:
-            f.write(data)
-        with open(_meta_cache_path(file_id), "w", encoding="utf-8") as f:
-            f.write(f"{mime_type}\n{filename}")
-    except Exception:
-        pass
+    # Save thumb and preview to disk cache
+    if size in ("thumb", "preview") and len(data) < 5 * 1024 * 1024:
+        try:
+            with open(_disk_cache_path(file_id, size), "wb") as f:
+                f.write(data)
+            with open(_meta_cache_path(file_id), "w", encoding="utf-8") as f:
+                f.write(f"{mime_type}\n{filename}")
+        except Exception:
+            pass
 
 
 def _read_from_caches(file_id: str, size: str):
@@ -142,17 +141,15 @@ def _read_from_caches(file_id: str, size: str):
         try:
             with open(bin_path, "rb") as f:
                 data = f.read()
-            mime_type = "image/webp" if size in ("thumb", "preview") and HAS_PILLOW else "image/jpeg"
+            mime_type = "image/jpeg"
             filename = f"memory_{file_id}"
             meta_path = _meta_cache_path(file_id)
             if os.path.isfile(meta_path):
                 with open(meta_path, "r", encoding="utf-8") as mf:
                     lines = mf.read().splitlines()
                     if len(lines) >= 2:
-                        orig_mime, filename = lines[0], lines[1]
-                        if size == "original" or not orig_mime.startswith("image/"):
-                            mime_type = orig_mime
-            if len(data) < 8 * 1024 * 1024:
+                        mime_type, filename = lines[0], lines[1]
+            if size == "thumb" and len(data) < 350 * 1024:
                 _ram_cache[cache_key] = (data, mime_type, filename)
             return data, mime_type, filename
         except Exception:
@@ -160,34 +157,8 @@ def _read_from_caches(file_id: str, size: str):
     return None
 
 
-def _generate_webp_variants(file_id: str, raw_bytes: bytes, mime_type: str, filename: str):
-    """Generates fast 360px thumb and 1280px preview WebP variants using Pillow if installed."""
-    if not HAS_PILLOW or not mime_type.startswith("image/"):
-        return
-    try:
-        img = Image.open(io.BytesIO(raw_bytes))
-        img = ImageOps.exif_transpose(img)
-        if img.mode not in ("RGB", "RGBA"):
-            img = img.convert("RGB")
-
-        # 1. Generate Preview (max 1280px)
-        prev_img = img.copy()
-        prev_img.thumbnail((1280, 1280), Image.Resampling.LANCZOS)
-        prev_buf = io.BytesIO()
-        prev_img.save(prev_buf, format="WEBP", quality=84, method=4)
-        _save_to_caches(file_id, "preview", prev_buf.getvalue(), "image/webp", filename)
-
-        # 2. Generate Thumbnail (max 360px)
-        thumb_img = prev_img.copy()
-        thumb_img.thumbnail((360, 360), Image.Resampling.LANCZOS)
-        thumb_buf = io.BytesIO()
-        thumb_img.save(thumb_buf, format="WEBP", quality=78, method=4)
-        _save_to_caches(file_id, "thumb", thumb_buf.getvalue(), "image/webp", filename)
-    except Exception as e:
-        print(f"Thumbnail generation note: {e}")
-
-
 def upload_raw_to_drive(file_obj, filename: str, mime_type: str, drive_service=None) -> str:
+    """Streams file_obj directly to Google Drive in chunks without loading the full file into RAM."""
     if drive_service is None:
         drive_service = get_drive_service()
     folder_id = get_drive_folder_id()
@@ -196,32 +167,28 @@ def upload_raw_to_drive(file_obj, filename: str, mime_type: str, drive_service=N
     if folder_id:
         file_metadata["parents"] = [folder_id]
 
-    file_obj.seek(0)
-    raw_bytes = file_obj.read()
-    file_obj.seek(0)
+    try:
+        file_obj.seek(0)
+    except Exception:
+        pass
 
     media = MediaIoBaseUpload(
-        io.BytesIO(raw_bytes),
+        file_obj,
         mimetype=mime_type or "application/octet-stream",
-        chunksize=1024 * 1024 * 8,
+        chunksize=1024 * 1024 * 4,
         resumable=True
     )
-    uploaded = drive_service.files().create(
+    request = drive_service.files().create(
         body=file_metadata,
         media_body=media,
         fields="id"
-    ).execute()
+    )
 
-    file_id = uploaded.get("id")
+    response = None
+    while response is None:
+        _, response = request.next_chunk()
 
-    if file_id:
-        _save_to_caches(file_id, "original", raw_bytes, mime_type or "image/jpeg", filename)
-        if (mime_type or "").startswith("image/"):
-            threading.Thread(
-                target=_generate_webp_variants,
-                args=(file_id, raw_bytes, mime_type or "image/jpeg", filename),
-                daemon=True
-            ).start()
+    file_id = response.get("id")
 
     try:
         drive_service.permissions().create(
@@ -262,8 +229,7 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
             file_obj.seek(0)
-            while chunk := file_obj.read(1024 * 1024 * 8):
-                tmp.write(chunk)
+            shutil.copyfileobj(file_obj, tmp, length=1024 * 1024 * 4)
             temp_path = tmp.name
 
         youtube = get_youtube_service()
@@ -282,7 +248,7 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
         media = MediaFileUpload(
             temp_path,
             mimetype=mime_type or "video/mp4",
-            chunksize=1024 * 1024 * 8,
+            chunksize=1024 * 1024 * 4,
             resumable=True
         )
         request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
@@ -297,7 +263,7 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
         return f"https://www.youtube.com/watch?v={video_id}"
 
     except Exception as yt_err:
-        print(f"YouTube upload failed ({yt_err}), using Google Drive original video...")
+        print(f"YouTube upload skipped/failed ({yt_err}), using Google Drive video...")
         if drive_file_id:
             return f"video#https://drive.google.com/uc?id={drive_file_id}&export=download"
         file_obj.seek(0)
@@ -309,35 +275,23 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
                 os.remove(temp_path)
             except Exception:
                 pass
+        gc.collect()
 
 
 def fetch_drive_file_bytes(file_id: str, size: str = "original"):
     """
-    Fast multi-tier media fetcher:
-    - size='thumb': ~15KB 360px thumbnail (instant folder & sidebar loading)
-    - size='preview': ~90KB 1280px preview (instant FullPageGallery viewing)
-    - size='original': 100% original uncompressed file (for downloads & video/audio streams)
+    Uses Google Drive's cloud thumbnail generator (=s400 for thumb, =s1400 for preview)
+    so Render never decodes 108MP images in local RAM.
     """
     if size not in ("thumb", "preview", "original"):
         size = "original"
 
-    # 1. Check RAM & SSD Disk Cache first (< 1ms)
-    cached = _read_from_caches(file_id, size)
-    if cached:
-        return cached[0], cached[2], cached[1]
-
-    # 2. If we already have the original on disk and Pillow is installed, resize locally in ~15ms
-    if size in ("thumb", "preview") and HAS_PILLOW:
-        orig_cached = _read_from_caches(file_id, "original")
-        if orig_cached and orig_cached[1].startswith("image/"):
-            _generate_webp_variants(file_id, orig_cached[0], orig_cached[1], orig_cached[2])
-            resized = _read_from_caches(file_id, size)
-            if resized:
-                return resized[0], resized[2], resized[1]
+    if size in ("thumb", "preview"):
+        cached = _read_from_caches(file_id, size)
+        if cached:
+            return cached[0], cached[2], cached[1]
 
     headers = get_drive_auth_headers()
-
-    # 3. Fetch lightweight metadata + Google's edge-resized thumbnailLink
     meta_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=name,mimeType,thumbnailLink"
     meta_res = _http_session.get(meta_url, headers=headers, timeout=10)
     if meta_res.status_code != 200:
@@ -348,34 +302,29 @@ def fetch_drive_file_bytes(file_id: str, size: str = "original"):
     mime_type = meta.get("mimeType") or "image/jpeg"
     thumb_link = meta.get("thumbnailLink")
 
-    # 4. If requesting 'thumb' or 'preview' for an image, grab Google Drive's fast edge thumbnail
-    # so we don't have to wait for a 10MB raw download just to show a thumbnail!
+    # If requesting thumb/preview and Drive is still indexing a brand-new upload, retry once after 0.6s
+    if size in ("thumb", "preview") and mime_type.startswith("image/") and not thumb_link:
+        time.sleep(0.6)
+        meta_res2 = _http_session.get(meta_url, headers=headers, timeout=10)
+        if meta_res2.status_code == 200:
+            thumb_link = meta_res2.json().get("thumbnailLink")
+
     if size in ("thumb", "preview") and mime_type.startswith("image/") and thumb_link:
         target_px = "=s400" if size == "thumb" else "=s1400"
         fast_url = re.sub(r"=s\d+", target_px, thumb_link)
-        t_res = _http_session.get(fast_url, headers=headers, timeout=10)
+        t_res = _http_session.get(fast_url, headers=headers, timeout=12)
         if t_res.status_code == 200 and t_res.content:
             t_mime = t_res.headers.get("Content-Type", "image/jpeg")
             _save_to_caches(file_id, size, t_res.content, t_mime, filename)
             return t_res.content, filename, t_mime
 
-    # 5. Download full original bytes via pooled HTTP session
+    # Fallback / Original download
     dl_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?alt=media"
-    dl_res = _http_session.get(dl_url, headers=headers, timeout=30)
+    dl_res = _http_session.get(dl_url, headers=headers, timeout=45)
     if dl_res.status_code != 200:
         raise RuntimeError(f"Failed to download Drive file {file_id}")
 
-    raw_bytes = dl_res.content
-    _save_to_caches(file_id, "original", raw_bytes, mime_type, filename)
-
-    if mime_type.startswith("image/") and HAS_PILLOW:
-        _generate_webp_variants(file_id, raw_bytes, mime_type, filename)
-        if size in ("thumb", "preview"):
-            resized = _read_from_caches(file_id, size)
-            if resized:
-                return resized[0], resized[2], resized[1]
-
-    return raw_bytes, filename, mime_type
+    return dl_res.content, filename, mime_type
 
 
 def download_original_from_drive(file_url: str):

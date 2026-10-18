@@ -18,7 +18,7 @@ class FolderErrorBoundary extends React.Component {
   }
 }
 
-export const MemoryCard = React.memo(({ memory, onClick, onDeleteClick, index = 0 }) => {
+export const MemoryCard = React.memo(({ memory, onClick, onRenameClick, onDeleteClick, index = 0 }) => {
   if (!memory) return null;
 
   const mediaList = Array.isArray(memory.memory_media) ? memory.memory_media : [];
@@ -48,7 +48,6 @@ export const MemoryCard = React.memo(({ memory, onClick, onDeleteClick, index = 
     return () => { active = false; };
   }, [mediaList]);
 
-  // Only pass the top 4 visible items into GlassFolder so large albums don't mount unnecessary DOM nodes
   const folderFiles = useMemo(() => {
     if (mediaList.length === 0) {
       return [
@@ -135,6 +134,7 @@ export const MemoryCard = React.memo(({ memory, onClick, onDeleteClick, index = 
           onFileSelect={(_, fileIdx) => onClick(memory, fileIdx)}
           menu={[
             { label: 'Open Album Gallery ✨', onSelect: () => onClick(memory, 0) },
+            { label: 'Edit Album Name ✏️', onSelect: () => onRenameClick && onRenameClick(memory) },
             { label: 'Delete Entire Album', danger: true, onSelect: () => onDeleteClick(memory) }
           ]}
         />
