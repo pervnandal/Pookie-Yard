@@ -3,7 +3,7 @@ import { Icons } from '../common/Icons';
 import { parseMediaUrl } from '../../utils/mediaParser';
 import { API_BASE_URL } from '../../utils/apiUtils';
 
-export const ChronicleView = ({ showDialog, onOpenMemory }) => {
+export const ChronicleView = ({ showDialog, onOpenMemory, activeOccasion }) => {
   const [chronicle, setChronicle] = useState(null);
   const [loading, setLoading] = useState(true);
   const [weather, setWeather] = useState({ temp: '--', desc: 'Checking skies...' });
@@ -16,6 +16,30 @@ export const ChronicleView = ({ showDialog, onOpenMemory }) => {
     if (code >= 71 && code <= 82) return 'Snowing';
     if (code >= 95) return 'Thunderstorms';
     return 'Fair';
+  };
+
+  const fetchChronicle = async () => {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams();
+      if (activeOccasion?.title) {
+        params.set('occasion_title', activeOccasion.title);
+        if (activeOccasion.date) params.set('occasion_date', activeOccasion.date);
+        if (activeOccasion.notes) params.set('occasion_notes', activeOccasion.notes);
+      }
+      const queryStr = params.toString() ? `?${params.toString()}` : '';
+      const response = await fetch(`${API_BASE_URL}/api/chronicle${queryStr}`);
+      if (response.ok) {
+        const data = await response.json();
+        setChronicle(data);
+      } else {
+        showDialog({ type: 'alert', title: 'Error', message: 'Failed to fetch the morning paper.' });
+      }
+    } catch {
+      showDialog({ type: 'alert', title: 'Error', message: 'Could not connect to the printing press.' });
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -40,25 +64,11 @@ export const ChronicleView = ({ showDialog, onOpenMemory }) => {
     } else {
       setWeather({ temp: '--', desc: 'Beautiful Day' });
     }
-    fetchChronicle();
   }, []);
 
-  const fetchChronicle = async () => {
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/chronicle`);
-      if (response.ok) {
-        const data = await response.json();
-        setChronicle(data);
-      } else {
-        showDialog({ type: 'alert', title: 'Error', message: 'Failed to fetch the morning paper.' });
-      }
-    } catch {
-      showDialog({ type: 'alert', title: 'Error', message: 'Could not connect to the printing press.' });
-    } finally {
-      setLoading(false);
-    }
-  };
+  useEffect(() => {
+    fetchChronicle();
+  }, [activeOccasion?.id, activeOccasion?.title]);
 
   const renderNewspaperBody = () => {
     if (!chronicle?.memory) return null;

@@ -1,140 +1,158 @@
-import React from 'react';
-import { Icons } from '../common/Icons';
-import { parseMediaUrl } from '../../utils/mediaParser';
+import React, { useMemo, useState, useEffect } from 'react';
+import GlassFolder from '../ui/glass-folder-cards';
+import { parseMediaUrl, captureVideoFrame, preloadHighResImage } from '../../utils/mediaParser';
 
-export const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
-  const displayMediaRaw = memory.memory_media?.length > 0 ? memory.memory_media[0].file_url : '';
-  const mediaObj = displayMediaRaw
-    ? parseMediaUrl(displayMediaRaw)
-    : { thumb: 'https://images.unsplash.com/photo-1518199268815-95a17b8f6459?auto=format&fit=crop&q=80&w=800' };
+const ART_PRESETS_CYCLE = ['aurora', 'dusk', 'ember', 'glacier', 'verdant'];
 
-  return (
+class FolderErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+  render() {
+    if (this.state.hasError) return this.props.fallback;
+    return this.props.children;
+  }
+}
+
+export const MemoryCard = React.memo(({ memory, onClick, onDeleteClick, index = 0 }) => {
+  if (!memory) return null;
+
+  const mediaList = Array.isArray(memory.memory_media) ? memory.memory_media : [];
+  const safeIndex = typeof index === 'number' && !isNaN(index) ? index : 0;
+  const [resolvedThumbs, setResolvedThumbs] = useState({});
+
+  useEffect(() => {
+    let active = true;
+    mediaList.slice(0, 4).forEach((item, idx) => {
+      const parsed = parseMediaUrl(item?.file_url || '');
+      if (parsed.isLegacyVideo && parsed.videoStreamUrl) {
+        captureVideoFrame(parsed.videoStreamUrl).then((frame) => {
+          if (active && frame) setResolvedThumbs((prev) => ({ ...prev, [idx]: frame }));
+        });
+      } else if (parsed.isYoutube && parsed.thumbLow) {
+        const testImg = new Image();
+        testImg.onload = () => {
+          if (testImg.naturalWidth === 120 && parsed.videoStreamUrl) {
+            captureVideoFrame(parsed.videoStreamUrl).then((frame) => {
+              if (active && frame) setResolvedThumbs((prev) => ({ ...prev, [idx]: frame }));
+            });
+          }
+        };
+        testImg.src = parsed.thumbLow;
+      }
+    });
+    return () => { active = false; };
+  }, [mediaList]);
+
+  // Only pass the top 4 visible items into GlassFolder so large albums don't mount unnecessary DOM nodes
+  const folderFiles = useMemo(() => {
+    if (mediaList.length === 0) {
+      return [
+        {
+          name: memory.title || 'Story Note',
+          meta: memory.formattedDate || '',
+          art: ART_PRESETS_CYCLE[safeIndex % ART_PRESETS_CYCLE.length]
+        }
+      ];
+    }
+
+    return mediaList.slice(0, 4).map((item, idx) => {
+      const parsed = parseMediaUrl(item?.file_url || '');
+      const customFrame = resolvedThumbs[idx];
+      const thumbUrl = customFrame || (parsed.isLegacyVideo ? '' : (parsed.thumbLow || ''));
+      const kind = parsed.isVoice
+        ? 'Voice Note'
+        : parsed.isYoutube || parsed.isLegacyVideo
+        ? '🎬 Video Clip'
+        : `Photo #${idx + 1}`;
+
+      return {
+        name: `${memory.title || 'Memory'} — ${idx + 1}`,
+        meta: `${kind} · ${memory.formattedDate || ''}`,
+        image: parsed.isVoice ? undefined : (thumbUrl || undefined),
+        art: parsed.isVoice || !thumbUrl ? 'ember' : undefined
+      };
+    });
+  }, [mediaList, memory.title, memory.formattedDate, safeIndex, resolvedThumbs]);
+
+  const coverImage = useMemo(() => {
+    for (let i = 0; i < Math.min(mediaList.length, 4); i++) {
+      if (resolvedThumbs[i]) return resolvedThumbs[i];
+      const parsed = parseMediaUrl(mediaList[i]?.file_url || '');
+      if (!parsed.isVoice && !parsed.isLegacyVideo && parsed.thumbLow) return parsed.thumbLow;
+    }
+    return undefined;
+  }, [mediaList, resolvedThumbs]);
+
+  const seed = useMemo(() => {
+    const str = String(memory.id || memory.title || safeIndex);
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) % 997;
+    return h || 3;
+  }, [memory.id, memory.title, safeIndex]);
+
+  const warmAlbumPreviews = () => {
+    mediaList.slice(0, 3).forEach((m) => {
+      const parsed = parseMediaUrl(m?.file_url || '');
+      if (!parsed.isVoice && !parsed.isYoutube && !parsed.isLegacyVideo && parsed.thumb) {
+        preloadHighResImage(parsed.thumb);
+      }
+    });
+  };
+
+  const fallbackCard = (
     <div
-      className="bg-white/60 backdrop-blur-xl rounded-3xl overflow-hidden shadow-lg md:hover:shadow-2xl transition-all duration-300 border border-white/60 group cursor-pointer flex flex-col h-full relative"
-      tabIndex="0"
-      onClick={() => onClick(memory)}
-      onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
+      onClick={() => onClick(memory, 0)}
+      className="bg-white/60 backdrop-blur-xl rounded-3xl p-6 shadow-lg border border-white/60 cursor-pointer w-full max-w-[330px]"
     >
-      <div className="relative h-64 overflow-hidden bg-stone-900/10 flex items-center justify-center">
-        {mediaObj.isVoice ? (
-          <div className="w-full h-full flex flex-col items-center justify-center bg-stone-900/40 backdrop-blur-md text-rose-300">
-            <Icons.Mic />
-            <span className="text-xs font-medium mt-2">Audio Note</span>
-          </div>
-        ) : mediaObj.isYoutube || mediaObj.isLegacyVideo ? (
-          <>
-            <img
-              src={mediaObj.thumb}
-              loading="lazy"
-              alt={memory.title}
-              className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out"
-            />
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none bg-black/15">
-              <div className="w-12 h-12 bg-white/40 backdrop-blur-md rounded-full flex items-center justify-center text-white border border-white/60 shadow-lg text-lg">
-                ▶
-              </div>
-            </div>
-          </>
-        ) : (
-          <img
-            src={mediaObj.thumb}
-            loading="lazy"
-            alt={memory.title}
-            className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out"
-          />
-        )}
-        
-        <button 
-          onClick={(e) => { e.stopPropagation(); onDeleteClick(memory); }}
-          className="absolute top-4 left-4 p-2.5 bg-white/80 backdrop-blur-md border border-white/60 text-stone-600 hover:text-red-500 hover:bg-white rounded-full transition-colors z-30 shadow-md focus:outline-none"
-          title="Delete entire memory album"
-        >
-          <Icons.Trash />
-        </button>
-        
-        <div className="absolute top-4 right-4 bg-white/80 backdrop-blur-md border border-white/60 px-3 py-1 rounded-full text-xs font-semibold text-stone-800 shadow-sm z-20 flex items-center gap-1.5">
-          {memory.is_private && <span className="text-rose-600"><Icons.Lock /></span>}
-          {memory.formattedDate}
-        </div>
-      </div>
-      
-      <div className="p-6 flex flex-col flex-grow relative bg-gradient-to-t from-white/50 to-transparent">
-        <h3 className="text-xl font-serif font-semibold text-stone-900 mb-2 md:group-hover:text-rose-600 transition-colors drop-shadow-sm flex items-center gap-2">
-          {memory.title}
-        </h3>
-        <p className="text-stone-700 line-clamp-3 leading-relaxed whitespace-pre-wrap font-medium text-sm">
-          {memory.description || "No description provided."}
-        </p>
-      </div>
+      <h3 className="text-xl font-serif font-bold text-stone-800">{memory.title}</h3>
+      <p className="text-xs text-stone-500 mt-1">{memory.formattedDate}</p>
     </div>
   );
-};
+
+  return (
+    <FolderErrorBoundary fallback={fallbackCard}>
+      <div
+        className="flex flex-col items-center justify-end group relative select-none"
+        onMouseEnter={warmAlbumPreviews}
+      >
+        <GlassFolder
+          label={memory.is_private ? `🔒 ${memory.title || 'Memory'}` : (memory.title || 'Memory')}
+          meta={`${memory.formattedDate || ''} · ${mediaList.length} ${mediaList.length === 1 ? 'item' : 'items'}`}
+          tone="light"
+          art={ART_PRESETS_CYCLE[safeIndex % ART_PRESETS_CYCLE.length]}
+          seed={seed}
+          image={coverImage}
+          files={folderFiles}
+          action="more"
+          labelPlacement="bottom-left"
+          width={330}
+          appear={false}
+          onFileSelect={(_, fileIdx) => onClick(memory, fileIdx)}
+          menu={[
+            { label: 'Open Album Gallery ✨', onSelect: () => onClick(memory, 0) },
+            { label: 'Delete Entire Album', danger: true, onSelect: () => onDeleteClick(memory) }
+          ]}
+        />
+
+        <button
+          type="button"
+          onClick={() => onClick(memory, 0)}
+          className="mt-2.5 px-4 py-1.5 rounded-full bg-white/50 hover:bg-white/90 backdrop-blur-md border border-white/70 text-xs font-medium text-stone-600 hover:text-rose-600 shadow-sm transition-all flex items-center gap-1.5"
+        >
+          <span>Click folder to fan files</span>
+          <span className="text-stone-300">•</span>
+          <span className="font-semibold underline decoration-rose-400/60 underline-offset-2">
+            Open Album →
+          </span>
+        </button>
+      </div>
+    </FolderErrorBoundary>
+  );
+});
 
 export default MemoryCard;
-
-// import React from 'react';
-// import { Icons } from '../common/Icons';
-// import { parseMediaUrl } from '../../utils/mediaParser';
-
-// export const MemoryCard = ({ memory, onClick, onDeleteClick }) => {
-//   const displayMediaRaw = memory.memory_media?.length > 0 ? memory.memory_media[0].file_url : '';
-//   const mediaObj = displayMediaRaw ? parseMediaUrl(displayMediaRaw) : { thumb: 'https://images.unsplash.com/photo-1518199268815-95a17b8f6459?auto=format&fit=crop&q=80&w=800' };
-
-//   return (
-//     <div className="bg-white rounded-2xl overflow-hidden shadow-sm md:hover:shadow-xl transition-all duration-300 border border-stone-100 group cursor-pointer flex flex-col h-full relative"
-//          tabIndex="0" 
-//          onClick={() => onClick(memory)}
-//          onKeyDown={(e) => { if (e.key === 'Enter') onClick(memory); }}
-//     >
-//       <div className="relative h-64 overflow-hidden bg-stone-900 flex items-center justify-center">
-//         {mediaObj.isVoice ? (
-//             <div className="w-full h-full flex flex-col items-center justify-center bg-stone-800 text-rose-400">
-//                <Icons.Mic />
-//                <span className="text-xs font-medium mt-2">Audio Note</span>
-//             </div>
-//         ) : mediaObj.isYoutube || mediaObj.isLegacyVideo ? (
-//             <>
-//                <img src={mediaObj.thumb} loading="lazy" className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out opacity-80" />
-//                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-//                   <div className="w-12 h-12 bg-white/30 backdrop-blur-md rounded-full flex items-center justify-center text-white">
-//                      ▶
-//                   </div>
-//                </div>
-//             </>
-//         ) : (
-//             <img src={mediaObj.thumb} loading="lazy" alt={memory.title} className="w-full h-full object-cover transform md:group-hover:scale-105 transition-transform duration-700 ease-in-out" />
-//         )}
-        
-//         <button 
-//           onClick={(e) => { e.stopPropagation(); onDeleteClick(memory); }}
-//           className="absolute top-4 left-4 p-2.5 bg-white/90 text-stone-500 md:hover:text-red-500 md:hover:bg-white rounded-full transition-colors z-30 shadow-md focus:outline-none focus:ring-2 focus:ring-red-500"
-//           title="Delete entire memory album"
-//         >
-//           <Icons.Trash />
-//         </button>
-        
-//         <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm px-3 py-1 rounded-full text-xs font-semibold text-stone-700 shadow-sm z-20 flex items-center gap-1.5">
-//           {memory.is_private && <span className="text-rose-500"><Icons.Lock /></span>}
-//           {memory.formattedDate}
-//         </div>
-        
-//         {memory.memory_media && memory.memory_media.length > 1 && (
-//           <div className="absolute bottom-4 right-4 bg-black/60 backdrop-blur-sm px-2 py-1 rounded text-xs font-medium text-white shadow-md z-20 flex items-center gap-1.5">
-//             +{memory.memory_media.length - 1} media
-//           </div>
-//         )}
-//       </div>
-      
-//       <div className="p-6 flex flex-col flex-grow relative">
-//         <h3 className="text-xl font-serif font-semibold text-stone-800 mb-2 md:group-hover:text-rose-600 transition-colors flex items-center gap-2">
-//           {memory.title}
-//         </h3>
-//         <p className="text-stone-600 line-clamp-3 leading-relaxed whitespace-pre-wrap">
-//           {memory.description || "No description provided."}
-//         </p>
-//       </div>
-//     </div>
-//   );
-// };
-
-// export default MemoryCard;

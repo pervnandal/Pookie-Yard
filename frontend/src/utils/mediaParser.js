@@ -1,121 +1,161 @@
+import { API_BASE_URL } from './apiUtils';
+
+const VIDEO_THUMB_STORAGE_KEY = 'us_video_thumbs_v1';
+const preloadedSet = new Set();
+
+const videoFrameCache = new Map(
+  (() => {
+    try {
+      const saved = localStorage.getItem(VIDEO_THUMB_STORAGE_KEY);
+      return saved ? Object.entries(JSON.parse(saved)) : [];
+    } catch {
+      return [];
+    }
+  })()
+);
+
+const saveVideoFrameToStorage = (url, dataUrl) => {
+  videoFrameCache.set(url, dataUrl);
+  try {
+    const obj = Object.fromEntries(videoFrameCache.entries());
+    localStorage.setItem(VIDEO_THUMB_STORAGE_KEY, JSON.stringify(obj));
+  } catch {}
+};
+
+/**
+ * Deduplicated native browser HTTP disk-cache preloader.
+ */
+export const preloadAndCacheMedia = (url) => {
+  if (!url || typeof Image === 'undefined' || preloadedSet.has(url)) return;
+  preloadedSet.add(url);
+  const img = new Image();
+  img.decoding = 'async';
+  img.src = url;
+};
+
+export const preloadHighResImage = preloadAndCacheMedia;
+
+export const captureVideoFrame = (videoUrl) => {
+  if (!videoUrl) return Promise.resolve(null);
+  if (videoFrameCache.has(videoUrl)) return Promise.resolve(videoFrameCache.get(videoUrl));
+
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    video.crossOrigin = 'anonymous';
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'metadata';
+
+    const cleanup = () => {
+      video.removeAttribute('src');
+      video.load();
+    };
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      resolve(null);
+    }, 6000);
+
+    video.onloadeddata = () => {
+      video.currentTime = Math.min(0.5, (video.duration || 1) * 0.2);
+    };
+
+    video.onseeked = () => {
+      clearTimeout(timeout);
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = Math.round((video.videoHeight / (video.videoWidth || 1)) * 320) || 200;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.78);
+        saveVideoFrameToStorage(videoUrl, dataUrl);
+        cleanup();
+        resolve(dataUrl);
+      } catch {
+        cleanup();
+        resolve(null);
+      }
+    };
+
+    video.onerror = () => {
+      clearTimeout(timeout);
+      cleanup();
+      resolve(null);
+    };
+
+    video.src = videoUrl;
+  });
+};
+
 export const parseMediaUrl = (rawUrl) => {
-  if (!rawUrl) return { original: '', thumb: '', isYoutube: false, isLegacyVideo: false, isVoice: false };
+  if (!rawUrl) {
+    return {
+      original: '',
+      thumb: '',
+      thumbLow: '',
+      videoStreamUrl: '',
+      isYoutube: false,
+      isLegacyVideo: false,
+      isVoice: false
+    };
+  }
 
   const isVoice = rawUrl.startsWith('voice#');
   const isVideoPrefix = rawUrl.startsWith('video#');
   const cleanUrl = rawUrl.replace(/^(voice#|video#)/, '');
 
-  // Match all YouTube URL formats (watch?v=, youtu.be/, embed/, shorts/)
+  const backupDriveMatch = cleanUrl.match(/drive_id=([a-zA-Z0-9_-]+)/);
+  const backupDriveId = backupDriveMatch ? backupDriveMatch[1] : null;
+  const backupStreamUrl = backupDriveId ? `${API_BASE_URL}/api/drive-image/${backupDriveId}?size=original` : '';
+
+  // 1. YouTube Videos
   const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/|^yt:)([a-zA-Z0-9_-]{11})/;
   const ytMatch = cleanUrl.match(ytRegex);
 
-  if (ytMatch && !cleanUrl.includes('drive.google.com')) {
+  if (ytMatch && !cleanUrl.split('&drive_id=')[0].includes('drive.google.com')) {
     const videoId = ytMatch[1];
     return {
       id: videoId,
+      driveId: backupDriveId,
       original: `https://www.youtube.com/watch?v=${videoId}`,
       embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`,
-      thumb: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+      thumbLow: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+      thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      videoStreamUrl: backupStreamUrl,
       isYoutube: true,
       isLegacyVideo: false,
       isVoice: false
     };
   }
 
-  // Handle Google Drive files (Images, Videos fallback, Audio)
-  const driveMatch = cleanUrl.match(/(?:id=|\/d\/)([a-zA-Z0-9_-]+)/);
+  // 2. Google Drive Media (3 distinct tiers: 15KB thumbLow, 90KB preview thumb, and raw original)
+  const driveMatch = cleanUrl.match(/(?:id=|\/d\/|drive-image\/)([a-zA-Z0-9_-]+)/);
   const driveId = driveMatch ? driveMatch[1] : null;
-
   const isLegacyVideo = isVideoPrefix || /\.(mp4|mov|webm|mkv)(\?.*)?$/i.test(cleanUrl);
 
   if (driveId) {
+    const base = `${API_BASE_URL}/api/drive-image/${driveId}`;
     return {
       id: driveId,
-      original: isLegacyVideo || isVoice
-        ? `https://drive.google.com/uc?id=${driveId}&export=download`
-        : `https://lh3.googleusercontent.com/d/${driveId}=w1600`,
-      drivePreviewUrl: `https://drive.google.com/file/d/${driveId}/preview`,
-      thumb: `https://lh3.googleusercontent.com/d/${driveId}=w600`,
+      driveId,
+      original: `${base}?size=original`,
+      thumb: isLegacyVideo || isVoice ? `${base}?size=original` : `${base}?size=preview`,
+      thumbLow: isLegacyVideo || isVoice ? `${base}?size=original` : `${base}?size=thumb`,
+      videoStreamUrl: isLegacyVideo ? `${base}?size=original` : '',
       isYoutube: false,
       isLegacyVideo,
-      isDriveVideo: isLegacyVideo,
       isVoice
     };
   }
 
   return {
     original: cleanUrl,
+    thumbLow: cleanUrl,
     thumb: cleanUrl,
+    videoStreamUrl: isLegacyVideo ? cleanUrl : '',
     isYoutube: false,
     isLegacyVideo,
-    isDriveVideo: false,
     isVoice
   };
 };
-
-// import { API_BASE_URL } from './apiUtils';
-
-// export const parseMediaUrl = (rawUrl) => {
-//   if (!rawUrl) return { provider: 'unknown', thumb: '', original: '', isYoutube: false, isDrive: false, isVoice: false };
-//   try {
-//     let parsedData = rawUrl;
-//     while (typeof parsedData === 'string' && (parsedData.startsWith('{') || parsedData.startsWith('"') || parsedData.startsWith("'"))) {
-//       try { parsedData = JSON.parse(parsedData); } catch (e) { break; }
-//     }
-
-//     if (typeof parsedData === 'object' && parsedData !== null) {
-//       const provider = parsedData.provider || 'unknown';
-//       const fileId = parsedData.id;
-
-//       if (provider === 'youtube') {
-//         return {
-//           provider: 'youtube',
-//           id: fileId,
-//           thumb: `https://img.youtube.com/vi/${fileId}/maxresdefault.jpg`,
-//           original: `https://www.youtube.com/embed/${fileId}`,
-//           isYoutube: true,
-//           isDrive: false,
-//           isVoice: false
-//         };
-//       }
-
-//       if (provider === 'drive' && fileId) {
-//         const proxyUrl = `${API_BASE_URL}/api/media/proxy/${fileId}`;
-//         return {
-//           provider: 'drive',
-//           id: fileId,
-//           thumb: proxyUrl,
-//           original: proxyUrl,
-//           isYoutube: false,
-//           isDrive: true,
-//           isVoice: false
-//         };
-//       }
-//     }
-
-//     // Fallback string evaluation
-//     const urlStr = String(rawUrl);
-//     const isVoice = urlStr.includes('voice_note');
-//     const isVideo = /\.(mp4|webm|mov|ogg)$/i.test(urlStr.split('?')[0]);
-//     let proxyUrl = urlStr;
-
-//     if (urlStr.includes('drive.google.com')) {
-//       const idMatch = urlStr.match(/id=([^&]+)/) || urlStr.match(/\/d\/([a-zA-Z0-9_-]+)/);
-//       if (idMatch && idMatch[1]) {
-//         proxyUrl = `${API_BASE_URL}/api/media/proxy/${idMatch[1]}`;
-//       }
-//     }
-
-//     return {
-//       provider: 'supabase',
-//       thumb: proxyUrl,
-//       original: proxyUrl,
-//       isYoutube: false,
-//       isDrive: urlStr.includes('drive.google.com'),
-//       isLegacyVideo: isVideo,
-//       isVoice: isVoice
-//     };
-//   } catch (e) {
-//     return { provider: 'fallback', thumb: rawUrl, original: rawUrl, isYoutube: false, isDrive: false, isVoice: false };
-//   }
-// };
