@@ -2,6 +2,7 @@ import os
 import re
 import json
 import random
+import hashlib
 import requests
 from datetime import datetime
 from dotenv import load_dotenv
@@ -66,7 +67,7 @@ def get_accessible_chat_models(client: Groq) -> List[str]:
 
     return PREFERRED_GROQ_MODELS
 
-def call_groq(messages: List[Dict[str, str]], prefer_fast: bool = False, temperature: float = 0.7, max_tokens: int = 700) -> str:
+def call_groq(messages: List[Dict[str, str]], prefer_fast: bool = False, temperature: float = 0.7, max_tokens: int = 900) -> str:
     client = get_groq_client()
     if not client:
         return "GROQ_API_KEY is missing in .env!"
@@ -94,11 +95,6 @@ def call_groq(messages: List[Dict[str, str]], prefer_fast: bool = False, tempera
     raise RuntimeError(f"All Groq models failed: {last_err}")
 
 def select_best_memory_for_occasion(all_memories: List[dict], occasion_title: str, occasion_date: str, occasion_notes: str = "") -> dict:
-    """
-    Uses semantic understanding (title & description meaning) + date proximity to pick the
-    exact album that matches the special occasion, avoiding unrelated albums on the same date
-    and finding celebrations even if they were celebrated a few days earlier/later.
-    """
     if not all_memories:
         return {}
 
@@ -121,7 +117,7 @@ Available Memory Albums:
 {json.dumps(catalog, ensure_ascii=False)}
 
 SELECTION RULES:
-1. Check BOTH the semantic meaning of each album's `title` and `description` AND its `date` (including matching month-day across years or nearby dates within a week if celebrated slightly earlier/later).
+1. Check BOTH the semantic meaning of each album's `title` and `description` AND its `date`.
 2. If there are multiple albums on the same date, pick the one whose title/description semantically matches "{occasion_title}".
 3. If an album was celebrated on a different date but its title/description clearly describes "{occasion_title}", prefer that semantically matching album!
 4. Reply with ONLY the exact `id` of the best matching album, nothing else."""
@@ -143,7 +139,6 @@ SELECTION RULES:
     except Exception as e:
         print(f"Semantic album selection fallback: {e}")
 
-    # Fallback heuristic: score by keyword overlap + month/day match
     occ_words = set(re.findall(r"\w+", f"{occasion_title} {occasion_notes}".lower()))
     target_mmdd = occasion_date[5:10] if len(occasion_date) >= 10 else ""
 
@@ -162,6 +157,18 @@ SELECTION RULES:
 
     ranked = sorted(all_memories, key=score_album, reverse=True)
     return ranked[0] if ranked else all_memories[0]
+
+
+def select_daily_album(all_memories: List[dict]) -> dict:
+    """
+    Picks ONE random album per calendar day deterministically based on today's YYYY-MM-DD date.
+    Throughout the entire day, every generation of the newspaper uses this same album of the day.
+    """
+    sorted_memories = sorted(all_memories, key=lambda m: str(m.get("id", "")))
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    day_hash = int(hashlib.sha256(today_str.encode("utf-8")).hexdigest(), 16)
+    return sorted_memories[day_hash % len(sorted_memories)]
+
 
 def needs_geo_or_weather(msg: str) -> bool:
     keywords = (
@@ -372,7 +379,6 @@ def generate_chronicle(
                 "date": occasion_date or datetime.now().strftime("%Y-%m-%d"),
                 "desc": occasion_notes or f"Celebrating {occasion_title}!"
             }
-            # Semantic + Date AI selection of the true matching album
             chosen_memory = select_best_memory_for_occasion(
                 all_memories,
                 occasion_title=occasion_title,
@@ -380,23 +386,32 @@ def generate_chronicle(
                 occasion_notes=occasion_notes or ""
             )
         else:
-            chosen_memory = random.choice(all_memories)
+            # Uses 1 consistent random album for the entire day
+            chosen_memory = select_daily_album(all_memories)
 
-        prompt = f"""Write a romantic, engaging vintage newspaper front-page article (2 to 3 paragraphs) for 'The Daily Chronicle'.
-Do NOT include a headline at the top. Use markdown **bold** and *italics* naturally.
+        prompt = f"""Write a romantic, engaging vintage newspaper front-page article for 'The Daily Chronicle'.
+CRITICAL LENGTH REQUIREMENT: You MUST write EXACTLY 4 detailed, expressive paragraphs separated by blank lines (\\n\\n).
+Do NOT include a headline or title at the top. Use markdown **bold** and *italics* naturally.
+
 Selected Album Title: {chosen_memory.get('title')}
 Album Date: {chosen_memory.get('memory_date')}
 Album Story: {chosen_memory.get('description')}
-{f"SPECIAL OCCASION EDITION: Today we are celebrating '{occasion_obj['title']}' (Occasion Date: {occasion_obj['date']}; Context: {occasion_obj['desc']}). Connect the special occasion seamlessly with the selected album's story and emotions!" if occasion_obj else ""}"""
+{f"SPECIAL OCCASION EDITION: Today we are celebrating '{occasion_obj['title']}' (Occasion Date: {occasion_obj['date']}; Context: {occasion_obj['desc']}). Connect the special occasion seamlessly with the selected album's story and emotions!" if occasion_obj else ""}
+
+Structure your 4 paragraphs as follows:
+- Paragraph 1: Set the scene, atmosphere, and excitement of the day this memory took place.
+- Paragraph 2: Dive into the specific highlights, food, places, and sweet moments from the story.
+- Paragraph 3: Capture the candid laughter, behind-the-scenes details, and warmth between the two of us.
+- Paragraph 4: A heartfelt reflection on why this chapter in our vault remains unforgettable."""
 
         article = call_groq(
             [
-                {"role": "system", "content": "You are the chief romantic journalist for 'The Daily Chronicle'."},
+                {"role": "system", "content": "You are the chief romantic journalist for 'The Daily Chronicle'. Always write exactly 4 rich paragraphs separated by double newlines."},
                 {"role": "user", "content": prompt}
             ],
             prefer_fast=False,
-            temperature=0.75,
-            max_tokens=700
+            temperature=0.8,
+            max_tokens=1100
         )
 
         return {

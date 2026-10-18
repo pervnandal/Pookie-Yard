@@ -62,10 +62,9 @@ def _background_warm_cache(memories_list: list):
 
 
 def _upload_single_file_sync(f: UploadFile, title: str, description: str, drive_service) -> Optional[str]:
-    """Uploads a single SpooledTemporaryFile directly without loading it into RAM."""
     mime = (f.content_type or "").lower()
     fname = f.filename or "memory_file"
-    if mime.startswith("video/") or fname.lower().endswith((".mp4", ".mov", ".webm", ".mkv")):
+    if mime.startswith("video/") or fname.lower().endswith((".mp4", ".mov", ".webm", ".mkv", ".avi")):
         return upload_to_youtube(f.file, title=f"{title} - {fname}", description=description, mime_type=mime or "video/mp4")
     return upload_to_drive(f.file, filename=fname, mime_type=mime or "image/jpeg", drive_service=drive_service)
 
@@ -117,6 +116,8 @@ def get_memories(limit: int = 24, offset: int = 0):
         print(f"get_memories error: {e}")
         return []
 
+import time
+_recent_album_creations = {}  # (title, memory_date) -> (timestamp, memory_id)
 
 @router.post("/memories")
 async def create_memory(
@@ -130,26 +131,43 @@ async def create_memory(
         raise HTTPException(status_code=500, detail="Database not connected")
 
     try:
-        try:
-            mem_resp = supabase.table("memories").insert({
-                "title": title,
-                "memory_date": memory_date,
-                "description": description,
-                "is_private": is_private
-            }).execute()
-        except Exception:
-            mem_resp = supabase.table("memories").insert({
-                "title": title,
-                "memory_date": memory_date,
-                "description": description
-            }).execute()
+        dedup_key = (title.strip().lower(), memory_date.strip())
+        now_ts = time.time()
+        memory_id = None
 
-        if not mem_resp.data:
-            raise HTTPException(status_code=500, detail="Failed to create memory record")
+        # Reuse existing album if an identical creation request arrived within the last 15 seconds
+        if dedup_key in _recent_album_creations:
+            prev_ts, prev_id = _recent_album_creations[dedup_key]
+            if now_ts - prev_ts < 15:
+                memory_id = prev_id
 
-        memory_id = mem_resp.data[0]["id"]
+        if not memory_id:
+            try:
+                mem_resp = supabase.table("memories").insert({
+                    "title": title,
+                    "memory_date": memory_date,
+                    "description": description,
+                    "is_private": is_private
+                }).execute()
+            except Exception:
+                mem_resp = supabase.table("memories").insert({
+                    "title": title,
+                    "memory_date": memory_date,
+                    "description": description
+                }).execute()
+
+            if not mem_resp.data:
+                raise HTTPException(status_code=500, detail="Failed to create memory record")
+
+            memory_id = mem_resp.data[0]["id"]
+            _recent_album_creations[dedup_key] = (now_ts, memory_id)
+
         media_records = []
-        drive_service = await asyncio.to_thread(get_drive_service) if files else None
+        has_non_video = any(
+            not ((f.content_type or "").lower().startswith("video/") or (f.filename or "").lower().endswith((".mp4", ".mov", ".webm", ".mkv", ".avi")))
+            for f in files if f.filename
+        )
+        drive_service = await asyncio.to_thread(get_drive_service) if has_non_video else None
 
         for f in files:
             if not f.filename:
@@ -167,7 +185,7 @@ async def create_memory(
             supabase.table("memory_media").insert(media_records).execute()
 
         full_mem = supabase.table("memories").select("*, memory_media(*)").eq("id", memory_id).execute()
-        return full_mem.data[0] if full_mem.data else mem_resp.data[0]
+        return full_mem.data[0] if full_mem.data else {"id": memory_id, "title": title, "memory_date": memory_date, "memory_media": []}
 
     except HTTPException:
         raise
@@ -187,7 +205,11 @@ async def add_media_to_memory(memory_id: str, files: List[UploadFile] = File(...
         desc = mem.data[0].get("description", "") if mem.data else ""
 
         media_records = []
-        drive_service = await asyncio.to_thread(get_drive_service) if files else None
+        has_non_video = any(
+            not ((f.content_type or "").lower().startswith("video/") or (f.filename or "").lower().endswith((".mp4", ".mov", ".webm", ".mkv", ".avi")))
+            for f in files if f.filename
+        )
+        drive_service = await asyncio.to_thread(get_drive_service) if has_non_video else None
 
         for f in files:
             if not f.filename:
@@ -220,28 +242,31 @@ def update_memory(memory_id: str, req: UpdateMemoryRequest):
 
 
 @router.delete("/media/{media_id}")
-def delete_single_media(media_id: str):
+async def delete_single_media(media_id: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected")
 
     media_resp = supabase.table("memory_media").select("*").eq("id", media_id).execute()
     if media_resp.data:
         file_url = media_resp.data[0].get("file_url")
-        delete_media_from_cloud(file_url)
+        if file_url:
+            await asyncio.to_thread(delete_media_from_cloud, file_url)
 
     supabase.table("memory_media").delete().eq("id", media_id).execute()
     return {"status": "deleted"}
 
 
 @router.delete("/memories/{memory_id}")
-def delete_entire_memory(memory_id: str):
+async def delete_entire_memory(memory_id: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected")
 
     media_resp = supabase.table("memory_media").select("file_url").eq("memory_id", memory_id).execute()
     if media_resp.data:
         for item in media_resp.data:
-            delete_media_from_cloud(item.get("file_url"))
+            file_url = item.get("file_url")
+            if file_url:
+                await asyncio.to_thread(delete_media_from_cloud, file_url)
 
     supabase.table("memory_media").delete().eq("memory_id", memory_id).execute()
     supabase.table("memories").delete().eq("id", memory_id).execute()
@@ -249,7 +274,7 @@ def delete_entire_memory(memory_id: str):
 
 
 @router.get("/media/{media_id}/download")
-def download_single_media_original(media_id: str):
+async def download_single_media_original(media_id: str):
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected")
 
@@ -259,7 +284,7 @@ def download_single_media_original(media_id: str):
 
     raw_url = media_resp.data[0].get("file_url", "")
     try:
-        buffer, filename, mime_type = download_original_from_drive(raw_url)
+        buffer, filename, mime_type = await asyncio.to_thread(download_original_from_drive, raw_url)
         if buffer:
             return StreamingResponse(
                 buffer,
@@ -267,46 +292,52 @@ def download_single_media_original(media_id: str):
                 headers={"Content-Disposition": f'attachment; filename="{filename}"'}
             )
     except Exception as e:
-        print(f"Direct Drive API download fallback: {e}")
+        print(f"Direct download fallback: {e}")
 
     clean_url = raw_url.replace("voice#", "").replace("video#", "")
     return RedirectResponse(clean_url)
 
 
 @router.get("/memories/{memory_id}/download")
-def download_album_zip(memory_id: str):
+async def download_album_zip(memory_id: str):
+    """Downloads the entire album as a ZIP containing both Google Drive photos AND YouTube videos."""
     if not supabase:
         raise HTTPException(status_code=500, detail="Database not connected")
 
     media_resp = supabase.table("memory_media").select("*").eq("memory_id", memory_id).execute()
     media_list = media_resp.data or []
 
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_STORED) as zip_file:
-        for idx, m in enumerate(media_list):
-            raw_url = m.get("file_url", "")
-            try:
-                buffer, filename, _ = download_original_from_drive(raw_url)
-                if buffer:
-                    zip_file.writestr(f"{idx+1:02d}_{filename}", buffer.read())
+    def _build_zip():
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_STORED) as zip_file:
+            for idx, m in enumerate(media_list):
+                raw_url = m.get("file_url", "")
+                try:
+                    buffer, filename, _ = download_original_from_drive(raw_url)
+                    if buffer:
+                        zip_file.writestr(f"{idx+1:02d}_{filename}", buffer.read())
+                        continue
+                except Exception as e:
+                    print(f"Zip download fallback for item {idx}: {e}")
+
+                # Fallback for standard direct HTTP URLs
+                is_voice = raw_url.startswith("voice#")
+                is_video = raw_url.startswith("video#")
+                url = raw_url.replace("voice#", "").replace("video#", "")
+                if "youtube.com" in url or "youtu.be" in url:
                     continue
-            except Exception as e:
-                print(f"Zip Drive API fallback for item {idx}: {e}")
+                try:
+                    r = requests.get(url, timeout=20)
+                    if r.status_code == 200:
+                        ext = "webm" if is_voice else ("mp4" if is_video else "jpg")
+                        zip_file.writestr(f"memory_{idx+1:02d}.{ext}", r.content)
+                except Exception:
+                    pass
 
-            is_voice = raw_url.startswith("voice#")
-            is_video = raw_url.startswith("video#")
-            url = raw_url.replace("voice#", "").replace("video#", "")
-            if "youtube.com" in url or "youtu.be" in url:
-                continue
-            try:
-                r = requests.get(url, timeout=20)
-                if r.status_code == 200:
-                    ext = "webm" if is_voice else ("mp4" if is_video else "jpg")
-                    zip_file.writestr(f"memory_{idx+1:02d}.{ext}", r.content)
-            except Exception:
-                pass
+        zip_buffer.seek(0)
+        return zip_buffer
 
-    zip_buffer.seek(0)
+    zip_buffer = await asyncio.to_thread(_build_zip)
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",

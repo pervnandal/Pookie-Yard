@@ -66,8 +66,8 @@ export const MemoryCard = React.memo(({ memory, onClick, onRenameClick, onDelete
       const kind = parsed.isVoice
         ? 'Voice Note'
         : parsed.isYoutube || parsed.isLegacyVideo
-        ? '🎬 Video Clip'
-        : `Photo #${idx + 1}`;
+          ? '🎬 Video Clip'
+          : `Photo #${idx + 1}`;
 
       return {
         name: `${memory.title || 'Memory'} — ${idx + 1}`,
@@ -131,7 +131,9 @@ export const MemoryCard = React.memo(({ memory, onClick, onRenameClick, onDelete
           labelPlacement="bottom-left"
           width={330}
           appear={false}
-          onFileSelect={(_, fileIdx) => onClick(memory, fileIdx)}
+          onFileSelect={(_, fileIdx) =>
+            onClick({ ...memory, initialMediaIndex: fileIdx, _openTrigger: Date.now() }, fileIdx)
+          }
           menu={[
             { label: 'Open Album Gallery ✨', onSelect: () => onClick(memory, 0) },
             { label: 'Edit Album Name ✏️', onSelect: () => onRenameClick && onRenameClick(memory) },

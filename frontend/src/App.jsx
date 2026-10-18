@@ -22,6 +22,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('vault');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedMemory, setSelectedMemory] = useState(null);
+  const [selectedMediaIndex, setSelectedMediaIndex] = useState(0);
 
   const [memories, setMemories] = useState(() => {
     try {
@@ -66,6 +67,12 @@ export default function App() {
     inputValue: ''
   });
   const ITEMS_PER_PAGE = 24;
+
+  // Opens an album directly at the requested image/media index
+  const handleOpenMemory = (mem, mediaIdx = 0) => {
+    setSelectedMediaIndex(typeof mediaIdx === 'number' && mediaIdx >= 0 ? mediaIdx : 0);
+    setSelectedMemory(mem);
+  };
 
   useEffect(() => {
     document.title = 'The Us Space';
@@ -205,7 +212,6 @@ export default function App() {
     return Array.from(groups.entries()).sort((a, b) => b[0].localeCompare(a[0]));
   }, [displayedMemories]);
 
-  // Edit Album Name Handler
   const handleRenameAlbum = (memory) => {
     showDialog({
       type: 'confirm',
@@ -321,7 +327,6 @@ export default function App() {
       {/* Side Floating Dock */}
       {activeTab === 'vault' && (
         <div className="fixed left-4 sm:left-6 bottom-5 sm:bottom-auto sm:top-28 z-40 flex flex-row sm:flex-col items-center gap-3">
-          {/* Mobile-Only + Add Memory Button */}
           <button
             type="button"
             onClick={() => setIsAddModalOpen(true)}
@@ -335,7 +340,7 @@ export default function App() {
             memories={memories}
             selectedDate={selectedDateFilter}
             onSelectDate={setSelectedDateFilter}
-            onOpenMemory={(mem) => setSelectedMemory(mem)}
+            onOpenMemory={(mem, idx) => handleOpenMemory(mem, idx)}
           />
 
           <SpecialOccasionWidget
@@ -394,7 +399,6 @@ export default function App() {
         {activeTab === 'vault' && (
           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-8 sm:py-10 pb-32">
             <div className="text-center mb-10 sm:mb-12 relative z-10">
-              {/* Mobile-Only Days Together Pill */}
               <div className="md:hidden inline-flex items-center gap-1.5 bg-white/75 backdrop-blur-md px-3.5 py-1 rounded-full border border-white/80 shadow-sm mb-3">
                 <span className="text-rose-500 animate-pulse text-xs">❤️</span>
                 <span className="text-xs font-bold text-rose-600 font-sans tracking-wide">
@@ -454,7 +458,7 @@ export default function App() {
                             key={memory.id}
                             index={idx}
                             memory={memory}
-                            onClick={(mem) => setSelectedMemory(mem)}
+                            onClick={(mem, fileIdx) => handleOpenMemory(mem, fileIdx)}
                             onRenameClick={handleRenameAlbum}
                             onDeleteClick={handleDeleteAlbum}
                           />
@@ -487,7 +491,7 @@ export default function App() {
           <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-32">
             <ChronicleView
               showDialog={showDialog}
-              onOpenMemory={setSelectedMemory}
+              onOpenMemory={(mem, exactIdx) => handleOpenMemory(mem, exactIdx)}
               activeOccasion={activeOccasion}
             />
           </div>
@@ -510,8 +514,9 @@ export default function App() {
         isOpen={!!selectedMemory}
         onClose={() => setSelectedMemory(null)}
         memory={selectedMemory}
+        initialIndex={selectedMediaIndex}
         memories={memories}
-        onSelectMemory={setSelectedMemory}
+        onSelectMemory={(mem, idx) => handleOpenMemory(mem, idx)}
         onMemoryUpdated={handleRefreshMemories}
         showDialog={showDialog}
       />
@@ -524,7 +529,11 @@ export default function App() {
         }}
         onInputChange={handleDialogInput}
       />
-      <PookieWidget memories={memories} onSelectMemory={setSelectedMemory} isGalleryOpen={!!selectedMemory} />
+      <PookieWidget
+        memories={memories}
+        onSelectMemory={(mem) => handleOpenMemory(mem, 0)}
+        isGalleryOpen={!!selectedMemory}
+      />
     </div>
   );
 }

@@ -30,55 +30,48 @@ const sendSingleFormData = (url, formData, onProgress) => {
     };
 
     xhr.ontimeout = () => reject({ detail: 'Upload timed out. Please check your internet connection.' });
-    xhr.onerror = () => reject({ detail: 'Connection interrupted during upload. Retrying...' });
+    xhr.onerror = () => reject({ detail: 'Connection interrupted during upload.' });
 
     xhr.send(formData);
   });
 };
 
 /**
- * Automatically splits multi-file uploads into sequential 1-file requests with auto-retry.
- * Prevents Render 512MB RAM OOM crashes and 100s Cloudflare/Render HTTP timeouts when uploading many files at once.
+ * 2-Phase Upload Pipeline:
+ * 1. If creating a new album (/api/memories), creates the album row ONCE first.
+ * 2. Uploads each file sequentially to /api/memories/{id}/media with per-file retry.
+ * This guarantees a retry can NEVER create a duplicate album.
  */
 export const uploadFilesWithProgress = async (url, formData, onProgress, onSuccess, onError) => {
   try {
-    const allFiles = formData.getAll('files').filter((f) => f && f.size !== undefined);
+    const allFiles = formData.getAll('files').filter((f) => f && f.size !== undefined && f.size > 0);
+    const isCreatingAlbum = url.endsWith('/api/memories');
 
-    // Case 1: 0 or 1 file -> send directly (with 1 automatic retry on transient network drop)
-    if (allFiles.length <= 1) {
-      let lastErr;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        try {
-          const res = await sendSingleFormData(url, formData, (fraction) => {
-            if (onProgress) onProgress(Math.round(fraction * 100));
-          });
-          onSuccess(res);
-          return;
-        } catch (err) {
-          lastErr = err;
-        }
-      }
-      onError(lastErr);
-      return;
-    }
-
-    // Case 2: Multiple files -> sequential upload so Render only processes 1 file in RAM at a time
     let targetMediaUrl = url;
     let createdMemory = null;
 
-    // If creating a new album (/api/memories), create the album metadata first, then upload each file to /api/memories/{id}/media
-    if (url.endsWith('/api/memories')) {
+    // Phase 1: Create the album metadata row ONCE (without files)
+    if (isCreatingAlbum) {
       const initForm = new FormData();
       for (const [key, val] of formData.entries()) {
         if (key !== 'files') initForm.append(key, val);
       }
       createdMemory = await sendSingleFormData(url, initForm, null);
       if (!createdMemory || !createdMemory.id) {
-        throw { detail: 'Failed to initialize album before uploading files.' };
+        throw { detail: 'Failed to create album record.' };
+      }
+      if (allFiles.length === 0) {
+        if (onProgress) onProgress(100);
+        onSuccess(createdMemory);
+        return;
       }
       targetMediaUrl = `${url}/${createdMemory.id}/media`;
+    } else if (allFiles.length === 0) {
+      onSuccess({});
+      return;
     }
 
+    // Phase 2: Upload each file sequentially to /api/memories/{id}/media
     const totalFiles = allFiles.length;
     for (let i = 0; i < totalFiles; i++) {
       const singleForm = new FormData();
@@ -87,7 +80,6 @@ export const uploadFilesWithProgress = async (url, formData, onProgress, onSucce
       let uploaded = false;
       let lastErr = null;
 
-      // Up to 2 attempts per individual file
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
           await sendSingleFormData(targetMediaUrl, singleForm, (fileFraction) => {

@@ -54,7 +54,16 @@ const SmartThumb = React.memo(({ parsed, className = "w-full h-full object-cover
   );
 });
 
-export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMemory, onMemoryUpdated, showDialog }) => {
+export const FullPageGallery = ({
+  isOpen,
+  onClose,
+  memory,
+  initialIndex = 0,
+  memories,
+  onSelectMemory,
+  onMemoryUpdated,
+  showDialog
+}) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [previewLoaded, setPreviewLoaded] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -62,6 +71,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [expandedAlbumId, setExpandedAlbumId] = useState(null);
   const [isEditingDesc, setIsEditingDesc] = useState(false);
+  const [isDescExpanded, setIsDescExpanded] = useState(false);
   const [descText, setDescText] = useState("");
   const containerRef = useRef(null);
 
@@ -69,21 +79,37 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
   const [touchStart, setTouchStart] = useState(null);
   const [touchEnd, setTouchEnd] = useState(null);
 
+  // Jump directly to memory.initialMediaIndex (from Chronicle / Folder card) or initialIndex
   useEffect(() => {
     if (isOpen && memory) {
-      setCurrentIndex(0);
+      const startIdx =
+        typeof memory.initialMediaIndex === 'number' && memory.initialMediaIndex >= 0
+          ? memory.initialMediaIndex
+          : typeof initialIndex === 'number' && initialIndex >= 0
+          ? initialIndex
+          : 0;
+      setCurrentIndex(startIdx);
       setExpandedAlbumId(memory.id);
       setDescText(memory.description || "");
       setIsEditingDesc(false);
+      setIsDescExpanded(false);
       setIsMobileSidebarOpen(false);
     }
-  }, [isOpen, memory?.id]);
+  }, [isOpen, memory?.id, memory?._openTrigger, memory?.initialMediaIndex, initialIndex]);
 
   useEffect(() => {
     const handleFsChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', handleFsChange);
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
+
+  // Ensure the active album is always visible in the sidebar list even if opened from the Chronicle
+  const sidebarMemories = useMemo(() => {
+    const list = Array.isArray(memories) ? memories : [];
+    if (!memory) return list;
+    if (list.some((m) => m.id === memory.id)) return list;
+    return [memory, ...list];
+  }, [memories, memory]);
 
   const mediaList = memory?.memory_media || [];
   const parsedMediaList = useMemo(
@@ -94,7 +120,6 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
   const safeIndex = Math.min(currentIndex, Math.max(0, parsedMediaList.length - 1));
   const activeMedia = parsedMediaList[safeIndex] || null;
 
-  // Preload neighboring 3 slides (+1, +2, -1) so clicking Next/Prev is instantaneous
   useEffect(() => {
     setPreviewLoaded(false);
     const total = parsedMediaList.length;
@@ -254,7 +279,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
         />
       )}
 
-      {/* Retractable Mobile Drawer & Desktop Sidebar */}
+      {/* Sidebar */}
       {!isFullscreen && (
         <div
           className={`fixed inset-y-0 left-0 w-80 bg-stone-950 border-r border-stone-800 flex-col shrink-0 z-[110] transform transition-transform duration-200 ease-out md:relative md:translate-x-0 md:flex ${
@@ -280,7 +305,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
           </div>
           
           <div className="flex-1 overflow-y-auto p-3 space-y-3 custom-scrollbar">
-            {memories.map((m) => {
+            {sidebarMemories.map((m) => {
               const isExpanded = expandedAlbumId === m.id;
               const displayMediaRaw = m.memory_media?.length > 0 ? m.memory_media[0].file_url : '';
               const parsedThumb = displayMediaRaw ? parseMediaUrl(displayMediaRaw) : null;
@@ -295,7 +320,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                         setExpandedAlbumId(m.id); 
                         if (m.id !== memory.id) { 
                           setCurrentIndex(0); 
-                          onSelectMemory(m); 
+                          onSelectMemory({ ...m, initialMediaIndex: 0 }, 0); 
                         } 
                       }
                     }}
@@ -332,7 +357,9 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                             key={media.id || idx}
                             onClick={(e) => { 
                               e.stopPropagation(); 
-                              if (m.id !== memory.id) onSelectMemory(m); 
+                              if (m.id !== memory.id) {
+                                onSelectMemory({ ...m, initialMediaIndex: idx, _openTrigger: Date.now() }, idx);
+                              }
                               setCurrentIndex(idx); 
                               setIsMobileSidebarOpen(false);
                             }}
@@ -412,7 +439,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
           </div>
         </div>
 
-        {/* Instant Media Stage: Shows RAM-cached thumbLow immediately, then snaps to 90KB preview */}
+        {/* Media Stage */}
         <div 
           className="flex-1 relative flex items-center justify-center p-4 md:p-12 min-h-0 z-0"
           onTouchStart={onTouchStart}
@@ -451,7 +478,6 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                 />
               ) : (
                 <div className="relative w-full h-full flex items-center justify-center">
-                  {/* Layer 1: Instant already-cached 360px thumbnail (0ms display, no blank wait) */}
                   {!previewLoaded && (
                     <img
                       src={activeMedia.thumbLow}
@@ -460,7 +486,6 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                       draggable="false"
                     />
                   )}
-                  {/* Layer 2: Fast 1280px preview (~90KB) */}
                   <img
                     key={activeMedia.thumb}
                     src={activeMedia.thumb}
@@ -502,7 +527,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
 
         {/* Bottom Floating Information & Action Bar */}
         <div
-          className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-5 sm:p-6 z-50 transition-opacity flex flex-col md:flex-row items-end justify-between gap-4 pointer-events-none ${
+          className={`absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/95 via-black/75 to-transparent p-5 sm:p-6 z-50 transition-opacity flex flex-col md:flex-row items-end justify-between gap-4 pointer-events-none ${
             isFullscreen ? 'opacity-0 hover:opacity-100' : 'opacity-100'
           }`}
         >
@@ -518,7 +543,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                   )}
                 </h2>
                 
-                <div className="text-stone-300 text-xs sm:text-sm mb-3 font-medium flex items-center gap-3 flex-wrap">
+                <div className="text-stone-300 text-xs sm:text-sm mb-2.5 font-medium flex items-center gap-3 flex-wrap">
                   <span>{memory.formattedDate}</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); handleDownloadAlbum(); }}
@@ -538,7 +563,7 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                   </button>
                 </div>
 
-                <div className="mt-2">
+                <div className="mt-1.5">
                   {isEditingDesc ? (
                     <div className="bg-stone-900 p-3 rounded-xl border border-stone-800">
                       <textarea 
@@ -558,9 +583,30 @@ export const FullPageGallery = ({ isOpen, onClose, memory, memories, onSelectMem
                       </div>
                     </div>
                   ) : (
-                    <p className="text-stone-300 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed line-clamp-2 sm:line-clamp-3 hover:line-clamp-none transition-all duration-300">
-                      {memory.description || <span className="italic opacity-50">No description provided.</span>}
-                    </p>
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (memory.description) setIsDescExpanded((prev) => !prev);
+                      }}
+                      className={`cursor-pointer rounded-xl transition-all ${
+                        isDescExpanded
+                          ? 'bg-stone-900/90 backdrop-blur-md p-3 border border-white/15 max-h-44 overflow-y-auto custom-scrollbar'
+                          : ''
+                      }`}
+                    >
+                      <p
+                        className={`text-stone-200 text-xs sm:text-sm whitespace-pre-wrap leading-relaxed ${
+                          isDescExpanded ? '' : 'line-clamp-2'
+                        }`}
+                      >
+                        {memory.description || <span className="italic opacity-50">No description provided.</span>}
+                      </p>
+                      {memory.description && memory.description.length > 90 && (
+                        <span className="inline-block text-[11px] font-bold text-rose-400 mt-1">
+                          {isDescExpanded ? 'Show less ↑' : 'Tap to read full story ↓'}
+                        </span>
+                      )}
+                    </div>
                   )}
                 </div>
               </>
