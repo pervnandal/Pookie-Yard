@@ -21,6 +21,8 @@ export const DatePlanner = ({ showDialog }) => {
     return stored;
   });
 
+  const [isChatFullscreen, setIsChatFullscreen] = useState(false);
+
   const [messages, setMessages] = useState(() => {
     try {
       const cached = localStorage.getItem(CHATS_CACHE_KEY);
@@ -411,20 +413,25 @@ export const DatePlanner = ({ showDialog }) => {
           scrollRestoreRef={scrollRestoreRef}
           safeSend={safeSend}
           showDialog={showDialog}
+          isChatFullscreen={isChatFullscreen}
+          setIsChatFullscreen={setIsChatFullscreen}
         />
 
-        <NotepadPanel
-          itineraries={itineraries}
-          activeDocId={activeDocId}
-          setActiveDocId={setActiveDocId}
-          activeContent={activeContent}
-          setActiveContent={setActiveContent}
-          partnerEditing={partnerEditing}
-          onItineraryChange={handleItineraryChange}
-          onCreateNewPlan={createNewPlan}
-          onRenamePlan={renamePlan}
-          onDeleteCurrentPlan={deleteCurrentPlan}
-        />
+        {/* Hide Notepad on mobile when Chat is in Fullscreen so background page height doesn't scroll */}
+        <div className={isChatFullscreen ? 'hidden md:flex flex-1 h-full min-w-0' : 'flex-1 flex h-[600px] md:h-full min-w-0'}>
+          <NotepadPanel
+            itineraries={itineraries}
+            activeDocId={activeDocId}
+            setActiveDocId={setActiveDocId}
+            activeContent={activeContent}
+            setActiveContent={setActiveContent}
+            partnerEditing={partnerEditing}
+            onItineraryChange={handleItineraryChange}
+            onCreateNewPlan={createNewPlan}
+            onRenamePlan={renamePlan}
+            onDeleteCurrentPlan={deleteCurrentPlan}
+          />
+        </div>
       </div>
     </div>
   );
