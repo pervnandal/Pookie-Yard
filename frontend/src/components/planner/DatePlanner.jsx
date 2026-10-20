@@ -8,18 +8,19 @@ import {
   deduplicateMessages,
   saveChatChunkToCache
 } from '../../utils/chatUtils';
+import { getCurrentPartnerRole } from '../../utils/userIdentity';
 import ChatPanel from './ChatPanel';
 import NotepadPanel from './NotepadPanel';
 
 export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
-  const [userId] = useState(() => {
-    let stored = localStorage.getItem('us_planner_id');
-    if (!stored) {
-      stored = `user_${Math.floor(Math.random() * 10000)}`;
-      localStorage.setItem('us_planner_id', stored);
-    }
-    return stored;
-  });
+  // Uses the persistent Partner Identity ('partner_his' | 'partner_her') so mobile and laptop match
+  const [userId, setUserId] = useState(() => getCurrentPartnerRole());
+
+  useEffect(() => {
+    const syncIdentity = () => setUserId(getCurrentPartnerRole());
+    window.addEventListener('us-identity-changed', syncIdentity);
+    return () => window.removeEventListener('us-identity-changed', syncIdentity);
+  }, []);
 
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
   const [incomingTheaterEvent, setIncomingTheaterEvent] = useState(null);
@@ -122,7 +123,7 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
           setHasMoreOlderChats(data.length >= CHAT_CHUNK_SIZE);
         }
       })
-      .catch((err) => console.error("Chat sync failed", err));
+      .catch((err) => console.error('Chat sync failed', err));
 
     fetch(`${API_BASE_URL}/api/itineraries`)
       .then((res) => res.json())
@@ -141,47 +142,50 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
           }
         }
       })
-      .catch((err) => console.error("Itinerary sync failed", err));
+      .catch((err) => console.error('Itinerary sync failed', err));
   }, []);
 
-  const loadOlderChatsChunk = useCallback(async (containerEl) => {
-    if (isLoadingOlderChats || !hasMoreOlderChats || messages.length === 0) return;
+  const loadOlderChatsChunk = useCallback(
+    async (containerEl) => {
+      if (isLoadingOlderChats || !hasMoreOlderChats || messages.length === 0) return;
 
-    const oldestDbMsg = messages.find((m) => typeof m.id === 'number' || /^\d+$/.test(String(m.id)));
-    if (!oldestDbMsg) {
-      setHasMoreOlderChats(false);
-      return;
-    }
-
-    setIsLoadingOlderChats(true);
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/api/chats?limit=${CHAT_CHUNK_SIZE}&before_id=${oldestDbMsg.id}`
-      );
-      if (res.ok) {
-        const olderChunk = await res.json();
-        if (!Array.isArray(olderChunk) || olderChunk.length === 0) {
-          setHasMoreOlderChats(false);
-        } else {
-          if (olderChunk.length < CHAT_CHUNK_SIZE) {
-            setHasMoreOlderChats(false);
-          }
-          if (containerEl) {
-            scrollRestoreRef.current = {
-              prevScrollHeight: containerEl.scrollHeight,
-              prevScrollTop: containerEl.scrollTop
-            };
-          }
-          shouldScrollToBottomRef.current = false;
-          setMessages((prev) => deduplicateMessages([...olderChunk, ...prev]));
-        }
+      const oldestDbMsg = messages.find((m) => typeof m.id === 'number' || /^\d+$/.test(String(m.id)));
+      if (!oldestDbMsg) {
+        setHasMoreOlderChats(false);
+        return;
       }
-    } catch (err) {
-      console.error("Failed to fetch older chat chunk", err);
-    } finally {
-      setIsLoadingOlderChats(false);
-    }
-  }, [isLoadingOlderChats, hasMoreOlderChats, messages]);
+
+      setIsLoadingOlderChats(true);
+      try {
+        const res = await fetch(
+          `${API_BASE_URL}/api/chats?limit=${CHAT_CHUNK_SIZE}&before_id=${oldestDbMsg.id}`
+        );
+        if (res.ok) {
+          const olderChunk = await res.json();
+          if (!Array.isArray(olderChunk) || olderChunk.length === 0) {
+            setHasMoreOlderChats(false);
+          } else {
+            if (olderChunk.length < CHAT_CHUNK_SIZE) {
+              setHasMoreOlderChats(false);
+            }
+            if (containerEl) {
+              scrollRestoreRef.current = {
+                prevScrollHeight: containerEl.scrollHeight,
+                prevScrollTop: containerEl.scrollTop
+              };
+            }
+            shouldScrollToBottomRef.current = false;
+            setMessages((prev) => deduplicateMessages([...olderChunk, ...prev]));
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch older chat chunk', err);
+      } finally {
+        setIsLoadingOlderChats(false);
+      }
+    },
+    [isLoadingOlderChats, hasMoreOlderChats, messages]
+  );
 
   useEffect(() => {
     if (activeDocId) {
@@ -190,7 +194,7 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
         setActiveContent(doc.content || '');
       }
     }
-  }, [activeDocId]);
+  }, [activeDocId, itineraries]);
 
   useEffect(() => {
     let reconnectTimer;
@@ -198,7 +202,10 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
 
     const connectWS = () => {
       if (!isMounted) return;
-      if (ws.current && (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)) {
+      if (
+        ws.current &&
+        (ws.current.readyState === WebSocket.OPEN || ws.current.readyState === WebSocket.CONNECTING)
+      ) {
         return;
       }
 
@@ -272,7 +279,12 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
       clearTimeout(reconnectTimer);
       if (ws.current) {
         ws.current.onclose = null;
-        ws.current.close();
+        if (ws.current.readyState === WebSocket.OPEN) {
+          ws.current.close();
+        } else if (ws.current.readyState === WebSocket.CONNECTING) {
+          const pendingSocket = ws.current;
+          pendingSocket.onopen = () => pendingSocket.close();
+        }
         ws.current = null;
       }
     };
@@ -286,7 +298,7 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: activeContent })
-        }).catch((err) => console.error("Auto-save failed", err));
+        }).catch((err) => console.error('Auto-save failed', err));
       }
     }, 1200);
     return () => clearTimeout(timer);
@@ -344,7 +356,7 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
           setActiveContent('');
           safeSend({ type: 'refresh_plans' });
         } catch (e) {
-          console.error("Failed to create plan", e);
+          console.error('Failed to create plan', e);
         }
       }
     });
@@ -372,7 +384,7 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
             safeSend({ type: 'refresh_plans' });
           }
         } catch (e) {
-          console.error("Failed to rename plan", e);
+          console.error('Failed to rename plan', e);
         }
       }
     });
@@ -398,7 +410,7 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
           }
           safeSend({ type: 'refresh_plans' });
         } catch (e) {
-          console.error("Failed to delete plan", e);
+          console.error('Failed to delete plan', e);
         }
       }
     });
@@ -423,7 +435,13 @@ export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
           setIsChatFullscreen={setIsChatFullscreen}
         />
 
-        <div className={isChatFullscreen ? 'hidden md:flex flex-1 h-full min-w-0' : 'flex-1 flex h-[620px] md:h-full min-w-0'}>
+        <div
+          className={
+            isChatFullscreen
+              ? 'hidden md:flex flex-1 h-full min-w-0'
+              : 'flex-1 flex h-[620px] md:h-full min-w-0'
+          }
+        >
           <NotepadPanel
             itineraries={itineraries}
             activeDocId={activeDocId}

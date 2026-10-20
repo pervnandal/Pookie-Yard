@@ -3,22 +3,26 @@ import { API_BASE_URL } from './utils/apiUtils';
 import { parseMediaUrl, preloadAndCacheMedia } from './utils/mediaParser';
 import { extractVaultMeta, serializeVaultDescription, saveLocalAlbumMeta } from './utils/vaultMetaUtils';
 import { registerPwaAndServiceWorker } from './utils/pwaPushUtils';
+import {
+  getCurrentPartnerRole,
+  setCurrentPartnerRole
+} from './utils/userIdentity';
 import { Icons } from './components/common/Icons';
 import Header from './components/common/Header';
 import CustomDialog from './components/common/CustomDialog';
 import SpecialOccasionWidget from './components/common/SpecialOccasionWidget';
-import ThemeMoodSwitcher, { THEME_MOODS } from './components/common/ThemeMoodSwitcher';
+import { THEME_MOODS } from './components/common/ThemeMoodSwitcher';
 import LoginScreen from './components/auth/LoginScreen';
+import HomeView from './components/home/HomeView';
 import VaultView from './components/vault/VaultView';
+import { ART_PRESETS_CYCLE } from './components/vault/MemoryCard';
 import VaultCalendar from './components/vault/VaultCalendar';
 import FullPageGallery from './components/vault/FullPageGallery';
 import AddMemoryModal from './components/vault/AddMemoryModal';
-import MemoryMapModal from './components/vault/MemoryMapModal';
 import ChronicleView from './components/chronicle/ChronicleView';
 import DatePlanner from './components/planner/DatePlanner';
 import PookieWidget from './components/ai/PookieWidget';
 import PocketLocketQuickDrop from './components/widget/PocketLocketQuickDrop';
-import DualCitySkyBar from './components/ldr/DualCitySkyBar';
 import MeetupBoardingPass from './components/ldr/MeetupBoardingPass';
 import OpenWhenEnvelopes from './components/ldr/OpenWhenEnvelopes';
 import TouchAcrossMilesBtn from './components/ldr/TouchAcrossMilesBtn';
@@ -26,19 +30,22 @@ import CoupleConnectionHub from './components/ldr/CoupleConnectionHub';
 
 const MEMORIES_CACHE_KEY = 'us_memories_cache_v1';
 const ANNIVERSARY_DATE = '2026-05-04';
-const ART_PRESETS_CYCLE = ['aurora', 'dusk', 'ember', 'glacier', 'verdant'];
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(localStorage.getItem('us_auth') === 'true');
+  const [partnerRole, setPartnerRole] = useState(() => getCurrentPartnerRole());
   const [activeTab, setActiveTab] = useState('vault');
   const [vaultCategory, setVaultCategory] = useState('timeline');
   const [isPrivateUnlocked, setIsPrivateUnlocked] = useState(false);
 
-  // Phase 4: Ambient Theme Switcher ('rose' | 'golden' | 'midnight')
+  // Mobile Retractable Vertical Speed-Dial Menu State
+  const [isMobileDockOpen, setIsMobileDockOpen] = useState(false);
+
+  // Ambient Theme ('rose' | 'golden' | 'midnight')
   const [themeKey, setThemeKey] = useState(() => localStorage.getItem('us_theme_mood_v1') || 'rose');
   const activeTheme = THEME_MOODS[themeKey] || THEME_MOODS.rose;
 
-  // Phase 4: Partner Mood & Craving State
+  // Partner Mood & Craving State
   const [moods, setMoods] = useState(() => {
     try {
       const saved = localStorage.getItem('us_phase4_moods_v1');
@@ -50,7 +57,6 @@ export default function App() {
 
   // Modals State
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isMemoryMapOpen, setIsMemoryMapOpen] = useState(false);
   const [isConnectionHubOpen, setIsConnectionHubOpen] = useState(false);
   const [isBoardingPassOpen, setIsBoardingPassOpen] = useState(false);
   const [isEnvelopesOpen, setIsEnvelopesOpen] = useState(false);
@@ -105,6 +111,12 @@ export default function App() {
     document.title = 'The Us Space';
     registerPwaAndServiceWorker();
   }, []);
+
+  const handleTogglePartnerRole = () => {
+    const nextRole = partnerRole === 'partner_his' ? 'partner_her' : 'partner_his';
+    setCurrentPartnerRole(nextRole);
+    setPartnerRole(nextRole);
+  };
 
   const handleThemeChange = (nextKey) => {
     setThemeKey(nextKey);
@@ -282,11 +294,13 @@ export default function App() {
     updateAlbumMeta(memory, { isPrivate: nextPriv, isConstant: false }, { is_private: nextPriv });
   };
 
-  const handleCycleTheme = (memory) => {
+  // Cycles visibly through all 5 Glass Themes on every single click
+  const handleCycleTheme = (memory, currentDisplayedArt) => {
     const { meta } = extractVaultMeta(memory);
-    const currIdx = ART_PRESETS_CYCLE.indexOf(meta.artPreset || 'aurora');
+    const baseArt = currentDisplayedArt || meta.artPreset || 'aurora';
+    const currIdx = ART_PRESETS_CYCLE.indexOf(baseArt);
     const nextArt = ART_PRESETS_CYCLE[(currIdx + 1) % ART_PRESETS_CYCLE.length];
-    const nextTone = nextArt === 'ember' && meta.tone === 'light' ? 'dark' : 'light';
+    const nextTone = nextArt === 'ember' || nextArt === 'dusk' ? 'dark' : 'light';
     updateAlbumMeta(memory, { artPreset: nextArt, tone: nextTone });
   };
 
@@ -345,8 +359,9 @@ export default function App() {
     return (
       <>
         <LoginScreen
-          onLogin={() => {
+          onLogin={(chosenRole) => {
             localStorage.setItem('us_auth', 'true');
+            if (chosenRole) setPartnerRole(chosenRole);
             setIsAuthenticated(true);
           }}
           showDialog={showDialog}
@@ -382,108 +397,138 @@ export default function App() {
           localStorage.removeItem('us_auth');
           setIsAuthenticated(false);
         }}
+        themeKey={themeKey}
+        onChangeTheme={handleThemeChange}
+        partnerRole={partnerRole}
+        onTogglePartnerRole={handleTogglePartnerRole}
       />
 
-      {/* Phase 3 & 4: Dual-City Sky Bar + Live Partner Mood Pill */}
-      {activeTab === 'vault' && (
-        <>
-          <DualCitySkyBar
-            sky={ldrStatus?.sky}
-            onOpenBoardingPass={() => setIsBoardingPassOpen(true)}
-            onOpenEnvelopes={() => setIsEnvelopesOpen(true)}
-            onConfigUpdated={(updated) => setLdrStatus(updated)}
-          />
+      {/* DESKTOP SIDE DOCK (Always visible across ALL tabs: Home, Vault, Chronicle, Planner) */}
+      <div className="hidden md:flex fixed left-6 top-28 z-40 flex-col items-center gap-3">
+        <VaultCalendar
+          memories={memories}
+          selectedDate={selectedDateFilter}
+          onSelectDate={(dateVal) => {
+            setSelectedDateFilter(dateVal);
+            if (dateVal) {
+              setVaultCategory('timeline');
+              setActiveTab('vault');
+            }
+          }}
+          onOpenMemory={(mem, idx) => handleOpenMemory(mem, idx)}
+        />
 
-          <div className="max-w-4xl mx-auto w-full px-4 pt-2 flex justify-center z-20">
+        <SpecialOccasionWidget
+          occasions={occasions}
+          activeOccasion={activeOccasion}
+          onAddOccasion={handleAddOccasion}
+          onDeleteOccasion={handleDeleteOccasion}
+          onSelectOccasion={(occ) => {
+            setManualOccasion(occ);
+            if (occ) setShowCelebrationBanner(true);
+          }}
+          onOpenChronicle={() => setActiveTab('chronicle')}
+        />
+
+        <button
+          type="button"
+          onClick={() => setIsLocketOpen(true)}
+          title="Pookie's 4×4 Pocket Locket Widget"
+          className="vault-surface w-11 h-11 rounded-full bg-white/85 backdrop-blur-xl hover:bg-rose-50 text-stone-800 shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 border border-white/80 flex items-center justify-center cursor-pointer"
+        >
+          <span className="text-lg">📱</span>
+        </button>
+
+        <TouchAcrossMilesBtn />
+      </div>
+
+      {/* MOBILE-ONLY VERTICAL RETRACTABLE SPEED-DIAL DOCK (Bottom-Left so it NEVER overlaps Pookie!) */}
+      <div className="md:hidden fixed left-4 bottom-5 z-40 flex flex-col-reverse items-center gap-2.5">
+        {/* Main Trigger Button */}
+        <button
+          type="button"
+          onClick={() => setIsMobileDockOpen((prev) => !prev)}
+          title="Open Quick Actions"
+          className={`w-12 h-12 rounded-full text-white shadow-xl flex items-center justify-center border border-white/30 transition-all duration-200 cursor-pointer ${isMobileDockOpen ? 'bg-rose-500 rotate-45 scale-105' : 'bg-stone-900 active:scale-95'
+            }`}
+        >
+          <Icons.Plus />
+        </button>
+
+        {/* Vertically Expanded Action Icons */}
+        {isMobileDockOpen && (
+          <div className="flex flex-col items-center gap-2.5 pb-1 animate-in slide-in-from-bottom-4 fade-in duration-150">
             <button
               type="button"
-              onClick={() => setIsConnectionHubOpen(true)}
-              className="bg-white/75 hover:bg-white backdrop-blur-xl border border-white/80 rounded-full px-4 py-1 text-[11px] font-bold text-stone-700 shadow-xs flex items-center gap-2 cursor-pointer transition-all"
+              onClick={() => {
+                setIsMobileDockOpen(false);
+                setIsAddModalOpen(true);
+              }}
+              title="Add New Album"
+              className="w-11 h-11 rounded-full bg-rose-500 text-white shadow-lg flex items-center justify-center border border-white/80 text-xs font-bold"
             >
-              <span>🤵 {moods.hisMood}</span>
-              <span className="text-stone-300">•</span>
-              <span>👰 {moods.herMood}</span>
-              <span className="text-rose-500 ml-1">🔐 Daily Question & Corkboard →</span>
+              📸
             </button>
+
+            <VaultCalendar
+              memories={memories}
+              selectedDate={selectedDateFilter}
+              onSelectDate={(dateVal) => {
+                setSelectedDateFilter(dateVal);
+                setIsMobileDockOpen(false);
+                if (dateVal) {
+                  setVaultCategory('timeline');
+                  setActiveTab('vault');
+                }
+              }}
+              onOpenMemory={(mem, idx) => {
+                setIsMobileDockOpen(false);
+                handleOpenMemory(mem, idx);
+              }}
+            />
+
+            <SpecialOccasionWidget
+              occasions={occasions}
+              activeOccasion={activeOccasion}
+              onAddOccasion={handleAddOccasion}
+              onDeleteOccasion={handleDeleteOccasion}
+              onSelectOccasion={(occ) => {
+                setManualOccasion(occ);
+                if (occ) setShowCelebrationBanner(true);
+              }}
+              onOpenChronicle={() => {
+                setIsMobileDockOpen(false);
+                setActiveTab('chronicle');
+              }}
+            />
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsMobileDockOpen(false);
+                setIsLocketOpen(true);
+              }}
+              title="Pookie's 4×4 Pocket Locket"
+              className="vault-surface w-11 h-11 rounded-full bg-white/90 backdrop-blur-xl text-stone-800 shadow-lg border border-white/80 flex items-center justify-center"
+            >
+              <span className="text-lg">📱</span>
+            </button>
+
+            <TouchAcrossMilesBtn />
           </div>
-        </>
-      )}
-
-      {/* Side Floating Dock */}
-      {activeTab === 'vault' && (
-        <div className="fixed left-4 sm:left-6 bottom-5 sm:bottom-auto sm:top-28 z-40 flex flex-row sm:flex-col items-center gap-2.5">
-          <button
-            type="button"
-            onClick={() => setIsAddModalOpen(true)}
-            title="Add New Memory"
-            className="md:hidden w-11 h-11 rounded-full bg-stone-900 hover:bg-stone-800 text-white shadow-lg flex items-center justify-center border border-white/20 active:scale-95 transition-transform"
-          >
-            <Icons.Plus />
-          </button>
-
-          <VaultCalendar
-            memories={memories}
-            selectedDate={selectedDateFilter}
-            onSelectDate={(dateVal) => {
-              setSelectedDateFilter(dateVal);
-              if (dateVal) setVaultCategory('timeline');
-            }}
-            onOpenMemory={(mem, idx) => handleOpenMemory(mem, idx)}
-          />
-
-          <SpecialOccasionWidget
-            occasions={occasions}
-            activeOccasion={activeOccasion}
-            onAddOccasion={handleAddOccasion}
-            onDeleteOccasion={handleDeleteOccasion}
-            onSelectOccasion={(occ) => {
-              setManualOccasion(occ);
-              if (occ) setShowCelebrationBanner(true);
-            }}
-            onOpenChronicle={() => setActiveTab('chronicle')}
-          />
-
-          {/* Phase 2: Pocket Locket Home Screen Widget */}
-          <button
-            type="button"
-            onClick={() => setIsLocketOpen(true)}
-            title="Pookie's Pocket Locket (Phone Home Screen Widget)"
-            className="w-11 h-11 rounded-full bg-white/85 backdrop-blur-xl hover:bg-rose-50 text-stone-800 shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 border border-white/80 flex items-center justify-center cursor-pointer"
-          >
-            <span className="text-lg">📱</span>
-          </button>
-
-          {/* Phase 4: Interactive "Where We've Been" Memory Map */}
-          <button
-            type="button"
-            onClick={() => setIsMemoryMapOpen(true)}
-            title="Where We've Been · Memory Map"
-            className="w-11 h-11 rounded-full bg-white/85 backdrop-blur-xl hover:bg-rose-50 text-stone-800 shadow-lg hover:shadow-xl transition-all hover:scale-105 active:scale-95 border border-white/80 flex items-center justify-center cursor-pointer"
-          >
-            <span className="text-lg">🗺️</span>
-          </button>
-
-          {/* Phase 3: Touch Across the Miles (Live Hug Button) */}
-          <TouchAcrossMilesBtn />
-
-          {/* Phase 4: Custom Ambient Theme Switcher */}
-          <ThemeMoodSwitcher themeKey={themeKey} onChangeTheme={handleThemeChange} />
-        </div>
-      )}
+        )}
+      </div>
 
       {activeOccasion && showCelebrationBanner && (
-        <div className="max-w-5xl mx-auto w-full px-4 pt-6 z-20 animate-in fade-in slide-in-from-top-4 duration-500">
-          <div className="bg-gradient-to-r from-rose-500/90 via-pink-500/90 to-amber-500/90 backdrop-blur-xl text-white rounded-3xl p-5 sm:p-6 shadow-xl border border-white/40 flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="max-w-5xl mx-auto w-full px-4 pt-5 z-20 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="bg-gradient-to-r from-rose-500/90 via-pink-500/90 to-amber-500/90 backdrop-blur-xl text-white rounded-3xl p-4 sm:p-5 shadow-xl border border-white/40 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">
-              <div className="text-4xl animate-bounce">🎉</div>
+              <div className="text-3xl animate-bounce">🎉</div>
               <div>
                 <span className="text-[10px] font-bold uppercase tracking-widest bg-white/25 px-2.5 py-0.5 rounded-full">
                   Special Celebration · {activeOccasion.date}
                 </span>
-                <h3 className="text-xl sm:text-2xl font-serif font-bold mt-1">{activeOccasion.title}</h3>
-                <p className="text-sm text-white/90">
-                  {activeOccasion.notes || 'Today is a special milestone in our story!'}
-                </p>
+                <h3 className="text-lg sm:text-xl font-serif font-bold mt-1">{activeOccasion.title}</h3>
               </div>
             </div>
             <div className="flex items-center gap-2 shrink-0">
@@ -508,6 +553,21 @@ export default function App() {
       )}
 
       <main className="flex-1 w-full relative z-10 flex flex-col min-h-0">
+        {activeTab === 'home' && (
+          <HomeView
+            daysTogether={daysTogether}
+            ldrStatus={ldrStatus}
+            onLdrConfigUpdated={(updated) => setLdrStatus(updated)}
+            moods={moods}
+            partnerRole={partnerRole}
+            onOpenBoardingPass={() => setIsBoardingPassOpen(true)}
+            onOpenEnvelopes={() => setIsEnvelopesOpen(true)}
+            onOpenConnectionHub={() => setIsConnectionHubOpen(true)}
+            onOpenLocket={() => setIsLocketOpen(true)}
+            onNavigateTab={(tab) => setActiveTab(tab)}
+          />
+        )}
+
         {activeTab === 'vault' && (
           <VaultView
             memories={memories}
@@ -518,7 +578,6 @@ export default function App() {
             setIsPrivateUnlocked={setIsPrivateUnlocked}
             selectedDateFilter={selectedDateFilter}
             setSelectedDateFilter={setSelectedDateFilter}
-            daysTogether={daysTogether}
             hasMore={hasMore}
             onLoadMore={() => {
               const nextPage = page + 1;
@@ -538,7 +597,7 @@ export default function App() {
         )}
 
         {activeTab === 'chronicle' && (
-          <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-12 pb-32">
+          <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-10 pb-32">
             <ChronicleView
               showDialog={showDialog}
               onOpenMemory={(mem, exactIdx) => handleOpenMemory(mem, exactIdx)}
@@ -551,6 +610,7 @@ export default function App() {
         {activeTab === 'planner' && (
           <div className="flex-1 max-w-6xl mx-auto w-full p-4 md:p-6 lg:p-8 flex flex-col h-auto md:h-[calc(100vh-6rem)] gap-6 pb-32 md:pb-8">
             <DatePlanner
+              key={partnerRole}
               showDialog={showDialog}
               memories={memories}
               onOpenMemory={(mem, idx) => handleOpenMemory(mem, idx)}
@@ -574,13 +634,6 @@ export default function App() {
           setVaultCategory('constant');
         }}
         showDialog={showDialog}
-      />
-      <MemoryMapModal
-        isOpen={isMemoryMapOpen}
-        onClose={() => setIsMemoryMapOpen(false)}
-        memories={memories}
-        onOpenMemory={handleOpenMemory}
-        onMemoryUpdated={handleRefreshMemories}
       />
       <CoupleConnectionHub
         isOpen={isConnectionHubOpen}

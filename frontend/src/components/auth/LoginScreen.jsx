@@ -1,104 +1,114 @@
 import React, { useState } from 'react';
-import { API_BASE_URL } from '../../utils/apiUtils';
-import { Icons } from '../common/Icons';
+import {
+  getCurrentPartnerRole,
+  setCurrentPartnerRole,
+  getPartnerNames,
+  setPartnerNames
+} from '../../utils/userIdentity';
 
 export const LoginScreen = ({ onLogin, showDialog }) => {
-  const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
+  const [passcode, setPasscode] = useState('');
+  const [selectedRole, setSelectedRole] = useState(() => getCurrentPartnerRole());
+  const [names, setNames] = useState(() => getPartnerNames());
 
-  const handleSubmit = async (e) => {
+  const SECRET_PASSCODE = import.meta.env.VITE_VAULT_PASSCODE || '0504';
+
+  const handleSubmit = (e) => {
     e.preventDefault();
-    if (!username.trim() || !password.trim()) {
-      showDialog({ type: 'alert', title: 'Missing Credentials', message: 'Please enter both username and password.' });
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: username.trim(), password })
-      });
-
-      if (response.ok) {
-        onLogin();
-      } else {
-        const err = await response.json().catch(() => ({}));
-        showDialog({
-          type: 'alert',
-          title: 'Access Denied',
-          message: err.detail || 'Invalid username or password.'
-        });
-      }
-    } catch {
+    if (passcode === SECRET_PASSCODE) {
+      setPartnerNames(names);
+      setCurrentPartnerRole(selectedRole);
+      onLogin(selectedRole);
+    } else {
       showDialog({
         type: 'alert',
-        title: 'Connection Error',
-        message: 'Cannot reach the server.'
+        title: 'Access Denied',
+        message: 'Incorrect passcode. Only the two of us know the key to this space! 💕'
       });
-    } finally {
-      setIsLoading(false);
+      setPasscode('');
     }
   };
 
   return (
-    <div className="min-h-screen w-full bg-[#fdfcfb] flex items-center justify-center p-4 relative overflow-hidden font-sans selection:bg-rose-200 selection:text-rose-900">
-      
-      {/* Warm Floating Glassmorphism Orbs */}
-      <div className="fixed top-[-10%] left-[-10%] rounded-full mix-blend-multiply opacity-60 pointer-events-none animate-[pulse_8s_ease-in-out_infinite]" style={{ backgroundColor: '#fecdd3', width: '500px', height: '500px', filter: 'blur(100px)' }}></div>
-      <div className="fixed top-[20%] right-[-10%] rounded-full mix-blend-multiply opacity-60 pointer-events-none animate-[pulse_10s_ease-in-out_infinite_alternate]" style={{ backgroundColor: '#ffedd5', width: '400px', height: '400px', filter: 'blur(100px)' }}></div>
-      <div className="fixed bottom-[-10%] left-[20%] rounded-full mix-blend-multiply opacity-50 pointer-events-none animate-[pulse_12s_ease-in-out_infinite]" style={{ backgroundColor: '#fbcfe8', width: '600px', height: '600px', filter: 'blur(120px)' }}></div>
-      <div className="fixed inset-0 pointer-events-none" style={{ opacity: 0.4, backgroundImage: 'radial-gradient(circle at 2px 2px, rgba(0,0,0,0.08) 1px, transparent 0)', backgroundSize: '32px 32px' }}></div>
+    <div className="min-h-screen w-full bg-[#fdfcfb] flex items-center justify-center p-4 relative overflow-hidden">
+      <div
+        className="fixed inset-0 z-0 pointer-events-none"
+        style={{
+          background:
+            'radial-gradient(circle at 20% 20%, rgba(254, 205, 211, 0.6) 0%, transparent 50%), radial-gradient(circle at 80% 80%, rgba(251, 207, 232, 0.55) 0%, transparent 50%)'
+        }}
+      />
 
-      {/* Classic Frosted Glass Login Box */}
-      <div className="bg-white/70 backdrop-blur-2xl p-8 sm:p-10 rounded-3xl shadow-2xl border border-white/80 w-full max-w-md relative z-10 animate-in fade-in zoom-in-95 duration-300">
-        <div className="text-center mb-8">
-          <span className="text-5xl mb-3 block drop-shadow-sm">🌸</span>
-          <h1 className="text-3xl sm:text-4xl font-serif font-bold text-stone-800 tracking-tight">
-            The <span className="text-rose-500 italic">Us</span> Space
-          </h1>
-          <p className="text-stone-500 text-sm mt-2">Enter our private credentials to unlock the vault.</p>
-        </div>
+      <div className="bg-white/85 backdrop-blur-2xl border border-white/90 rounded-[2.5rem] p-8 sm:p-10 max-w-md w-full shadow-2xl text-center relative z-10">
+        <span className="text-5xl block mb-3">🌸</span>
+        <h1 className="text-3xl sm:text-4xl font-serif font-bold text-stone-800">
+          The <span className="text-rose-500 italic">Us</span> Space
+        </h1>
+        <p className="text-xs sm:text-sm text-stone-500 mt-1 mb-6">
+          Choose who is logging in on this device so your chats, POVs, and widget sync to you.
+        </p>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-5">
+          {/* Partner Identity Selector (Syncs Phone & Laptop) */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1.5 ml-1">
-              Username
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-2">
+              Who is using this device?
             </label>
-            <input
-              type="text"
-              required
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter username..."
-              autoFocus
-              className="w-full bg-white/80 border border-stone-200 rounded-2xl px-4 py-3.5 text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-200 transition-all shadow-inner"
-            />
+            <div className="grid grid-cols-2 gap-3">
+              {[
+                { id: 'partner_his', icon: '🤵', defaultLabel: 'Him' },
+                { id: 'partner_her', icon: '👰', defaultLabel: 'Her' }
+              ].map((p) => {
+                const active = selectedRole === p.id;
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => setSelectedRole(p.id)}
+                    className={`p-3 rounded-2xl border-2 transition-all cursor-pointer flex flex-col items-center gap-1.5 ${active
+                        ? 'bg-rose-50/90 border-rose-500 shadow-md scale-[1.02]'
+                        : 'bg-white/70 border-stone-200/80 opacity-75 hover:opacity-100'
+                      }`}
+                  >
+                    <span className="text-2xl">{p.icon}</span>
+                    <input
+                      type="text"
+                      value={names[p.id] || ''}
+                      onClick={(e) => e.stopPropagation()}
+                      onChange={(e) => {
+                        setSelectedRole(p.id);
+                        setNames((prev) => ({ ...prev, [p.id]: e.target.value }));
+                      }}
+                      placeholder={p.defaultLabel}
+                      className="w-full text-center font-serif font-bold text-sm text-stone-800 bg-transparent border-b border-transparent focus:border-rose-400 focus:outline-none"
+                    />
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500">
+                      {active ? '✓ Selected' : 'Tap to select'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1.5 ml-1">
-              Password
+            <label className="block text-[10px] font-bold uppercase tracking-widest text-stone-400 mb-1.5">
+              Secret Vault Passcode
             </label>
             <input
               type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="w-full bg-white/80 border border-stone-200 rounded-2xl px-4 py-3.5 text-sm text-stone-800 placeholder:text-stone-400 focus:outline-none focus:border-rose-400 focus:ring-2 focus:ring-rose-200 transition-all shadow-inner"
+              value={passcode}
+              onChange={(e) => setPasscode(e.target.value)}
+              placeholder="Enter passcode..."
+              autoFocus
+              className="w-full bg-white border border-stone-200 rounded-2xl px-4 py-3.5 text-center text-lg tracking-widest focus:outline-none focus:border-rose-400 shadow-inner"
             />
           </div>
 
           <button
             type="submit"
-            disabled={isLoading}
-            className="w-full mt-2 bg-stone-900 hover:bg-stone-800 text-white font-medium py-3.5 rounded-2xl shadow-lg hover:shadow-xl transition-all flex items-center justify-center gap-2 disabled:opacity-50 active:scale-[0.98]"
+            className="w-full py-3.5 rounded-2xl bg-stone-900 hover:bg-rose-600 text-white font-bold text-sm shadow-lg transition-all cursor-pointer"
           >
-            <Icons.Lock />
-            <span>{isLoading ? 'Unlocking Vault...' : 'Unlock Vault'}</span>
+            Unlock As {names[selectedRole] || (selectedRole === 'partner_his' ? 'Him' : 'Her')} →
           </button>
         </form>
       </div>

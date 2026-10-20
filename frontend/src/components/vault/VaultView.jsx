@@ -15,7 +15,6 @@ export const VaultView = ({
     setIsPrivateUnlocked,
     selectedDateFilter,
     setSelectedDateFilter,
-    daysTogether,
     hasMore,
     onLoadMore,
     onOpenAddModal,
@@ -24,12 +23,14 @@ export const VaultView = ({
     onToggleConstant,
     onTogglePrivate,
     onCycleTheme,
+    onSetTimeCapsule,
     onDeleteAlbum,
     showDialog
 }) => {
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedTag, setSelectedTag] = useState(null);
     const [mediaTypeFilter, setMediaTypeFilter] = useState('all');
+    const [showSearchBar, setShowSearchBar] = useState(false);
 
     const matchesSearchAndFilters = (m) => {
         const { cleanDescription, meta } = extractVaultMeta(m);
@@ -145,27 +146,22 @@ export const VaultView = ({
         );
     };
 
-    return (
-        <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-8 sm:py-10 pb-32">
-            {/* Locked-Height Hero & Switcher Container (Zero layout shift when switching tabs) */}
-            <div className="text-center mb-10 relative z-10">
-                <div className="md:hidden inline-flex items-center gap-1.5 bg-white/75 backdrop-blur-md px-3.5 py-1 rounded-full border border-white/80 shadow-sm mb-3">
-                    <span className="text-rose-500 animate-pulse text-xs">❤️</span>
-                    <span className="text-xs font-bold text-rose-600 font-sans tracking-wide">
-                        {daysTogether} Days Together
-                    </span>
-                </div>
+    const hasActiveSearch = Boolean(searchQuery.trim() || selectedTag || mediaTypeFilter !== 'all');
 
-                <h2 className="text-4xl sm:text-5xl font-serif text-stone-800 mb-3 tracking-tight drop-shadow-sm">
+    return (
+        <div className="flex-1 max-w-6xl mx-auto w-full p-4 sm:p-6 lg:p-8 py-5 sm:py-8 pb-32">
+            {/* Compact, High-Vibe Vault Header */}
+            <div className="text-center mb-7 relative z-10">
+                <h2 className="text-3xl sm:text-5xl font-serif text-stone-800 mb-1.5 tracking-tight drop-shadow-xs">
                     Our Memory Vault
                 </h2>
-                <p className="text-stone-600 max-w-2xl mx-auto text-base sm:text-lg drop-shadow-sm">
+                <p className="text-stone-600 max-w-xl mx-auto text-xs sm:text-base">
                     A secure collection of our favorite days, biggest adventures, and quietest moments.
                 </p>
 
-                {/* OPTION B VIEW SWITCHER — Fixed Grid Pill Widths so tabs NEVER shift horizontally */}
-                <div className="mt-6 flex flex-wrap items-center justify-center gap-2.5">
-                    <div className="inline-grid grid-cols-3 bg-white/80 backdrop-blur-xl p-1.5 rounded-full border border-white/85 shadow-md w-full max-w-[460px]">
+                {/* Single Sleek Control Row: Category Switcher + Compact Search Icon + Roulette Dice */}
+                <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+                    <div className="vault-surface inline-grid grid-cols-3 bg-white/80 backdrop-blur-xl p-1 rounded-full border border-white/85 shadow-sm w-full max-w-[370px] sm:max-w-[420px]">
                         {[
                             { id: 'timeline', label: '🗓️ Timeline', count: categorizedMemories.timeline.length },
                             { id: 'constant', label: '📌 Constant', count: categorizedMemories.constant.length },
@@ -181,14 +177,14 @@ export const VaultView = ({
                                     key={tab.id}
                                     type="button"
                                     onClick={() => setVaultCategory(tab.id)}
-                                    className={`px-2 sm:px-3 py-2 rounded-full text-xs sm:text-sm font-bold transition-colors flex items-center justify-center gap-1.5 cursor-pointer whitespace-nowrap ${active
-                                            ? 'bg-stone-900 text-white shadow-sm'
-                                            : 'text-stone-600 hover:text-stone-900 hover:bg-stone-100/70'
+                                    className={`px-2 py-1.5 rounded-full text-xs sm:text-sm font-bold transition-colors flex items-center justify-center gap-1 cursor-pointer whitespace-nowrap ${active
+                                            ? 'bg-rose-500 text-white shadow-xs'
+                                            : 'text-stone-600 hover:text-stone-900'
                                         }`}
                                 >
                                     <span>{tab.label}</span>
                                     <span
-                                        className={`text-[10px] min-w-[20px] px-1.5 py-0.2 rounded-full text-center ${active ? 'bg-white/20 text-white' : 'bg-stone-200/80 text-stone-600'
+                                        className={`text-[10px] min-w-[18px] px-1 rounded-full text-center ${active ? 'bg-white/25 text-white' : 'bg-stone-200/70 text-stone-600'
                                             }`}
                                     >
                                         {tab.count}
@@ -198,41 +194,58 @@ export const VaultView = ({
                         })}
                     </div>
 
+                    {/* Compact Search Toggle Button */}
+                    <button
+                        type="button"
+                        onClick={() => setShowSearchBar((prev) => !prev)}
+                        title="Search & Filter Albums"
+                        className={`h-9 px-3 rounded-full text-xs font-bold border shadow-sm transition-all flex items-center gap-1 cursor-pointer ${showSearchBar || hasActiveSearch
+                                ? 'bg-rose-500 text-white border-rose-500'
+                                : 'vault-surface bg-white/80 hover:bg-white text-stone-700 border-white/85'
+                            }`}
+                    >
+                        <span>🔍</span>
+                        <span className="hidden sm:inline">Search</span>
+                    </button>
+
+                    {/* Memory Roulette Button */}
                     <button
                         type="button"
                         onClick={handleMemoryRoulette}
                         title="Memory Roulette: Open a random memory!"
-                        className="bg-white/80 hover:bg-rose-500 text-stone-700 hover:text-white backdrop-blur-xl border border-white/80 px-4 py-2.5 rounded-full text-xs sm:text-sm font-bold shadow-md hover:shadow-lg transition-colors flex items-center gap-1.5 cursor-pointer active:scale-95 shrink-0"
+                        className="vault-surface h-9 bg-white/80 hover:bg-rose-500 text-stone-700 hover:text-white backdrop-blur-xl border border-white/85 px-3 rounded-full text-xs font-bold shadow-sm transition-colors flex items-center gap-1 cursor-pointer active:scale-95"
                     >
                         <span>🎲</span>
                         <span className="hidden sm:inline">Surprise Us</span>
                     </button>
                 </div>
 
-                {/* Smart Search & Tag Filter Bar */}
-                <SmartSearchFilterBar
-                    memories={memories}
-                    searchQuery={searchQuery}
-                    setSearchQuery={setSearchQuery}
-                    selectedTag={selectedTag}
-                    setSelectedTag={setSelectedTag}
-                    mediaTypeFilter={mediaTypeFilter}
-                    setMediaTypeFilter={setMediaTypeFilter}
-                />
+                {/* Collapsible Smart Search & Filter Bar */}
+                {(showSearchBar || hasActiveSearch) && (
+                    <SmartSearchFilterBar
+                        memories={memories}
+                        searchQuery={searchQuery}
+                        setSearchQuery={setSearchQuery}
+                        selectedTag={selectedTag}
+                        setSelectedTag={setSelectedTag}
+                        mediaTypeFilter={mediaTypeFilter}
+                        setMediaTypeFilter={setMediaTypeFilter}
+                    />
+                )}
 
                 {selectedDateFilter && vaultCategory === 'timeline' && (
-                    <div className="mt-4 flex justify-center">
+                    <div className="mt-3 flex justify-center">
                         <button
                             type="button"
                             onClick={() => setSelectedDateFilter(null)}
-                            className="bg-rose-500 hover:bg-rose-600 text-white px-4 py-1.5 rounded-full text-xs font-bold shadow-md transition-all flex items-center gap-2"
+                            className="bg-rose-500 hover:bg-rose-600 text-white px-4 py-1 rounded-full text-xs font-bold shadow-md transition-all flex items-center gap-2"
                         >
                             <span>
                                 {selectedDateFilter.length === 4
                                     ? `Showing Year: ${selectedDateFilter}`
                                     : `Showing Date: ${selectedDateFilter}`}
                             </span>
-                            <span>✕ Clear Filter</span>
+                            <span>✕ Clear</span>
                         </button>
                     </div>
                 )}
@@ -246,16 +259,16 @@ export const VaultView = ({
                             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-rose-500"></div>
                         </div>
                     ) : memoriesGroupedByYear.length === 0 ? (
-                        <div className="text-center py-20 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-12 shadow-lg max-w-2xl mx-auto">
+                        <div className="vault-surface text-center py-20 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-12 shadow-lg max-w-2xl mx-auto">
                             <span className="text-6xl mb-4 block">📸</span>
                             <p className="text-xl font-medium text-stone-700">Your timeline is waiting.</p>
                         </div>
                     ) : (
                         <>
-                            <div className="space-y-16">
+                            <div className="space-y-14">
                                 {memoriesGroupedByYear.map(({ year: yearLabel, albums: yearMemories, stats }) => (
                                     <section key={yearLabel} className="w-full">
-                                        <div className="mb-8 px-2 min-h-[60px] flex flex-col justify-center">
+                                        <div className="mb-6 px-2">
                                             <div className="flex items-center gap-4">
                                                 <h3 className="text-2xl sm:text-3xl font-serif font-bold text-stone-800 tracking-tight shrink-0">
                                                     {yearLabel}
@@ -266,22 +279,22 @@ export const VaultView = ({
                                                 </span>
                                             </div>
 
-                                            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-stone-500 font-medium">
-                                                <span className="bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
+                                            <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-stone-500 font-medium">
+                                                <span className="vault-surface bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
                                                     ✨ {stats.albumsCount} {stats.albumsCount === 1 ? 'Album' : 'Albums'}
                                                 </span>
                                                 {stats.photos > 0 && (
-                                                    <span className="bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
+                                                    <span className="vault-surface bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
                                                         📸 {stats.photos} {stats.photos === 1 ? 'Photo' : 'Photos'}
                                                     </span>
                                                 )}
                                                 {stats.videos > 0 && (
-                                                    <span className="bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
+                                                    <span className="vault-surface bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
                                                         🎬 {stats.videos} {stats.videos === 1 ? 'Video' : 'Videos'}
                                                     </span>
                                                 )}
                                                 {stats.voices > 0 && (
-                                                    <span className="bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
+                                                    <span className="vault-surface bg-white/70 backdrop-blur-sm border border-stone-200/70 px-3 py-0.5 rounded-full shadow-2xs">
                                                         🎤 {stats.voices} {stats.voices === 1 ? 'Voice Note' : 'Voice Notes'}
                                                     </span>
                                                 )}
@@ -299,6 +312,7 @@ export const VaultView = ({
                                                     onToggleConstant={onToggleConstant}
                                                     onTogglePrivate={onTogglePrivate}
                                                     onCycleTheme={onCycleTheme}
+                                                    onSetTimeCapsule={onSetTimeCapsule}
                                                     onDeleteClick={onDeleteAlbum}
                                                 />
                                             ))}
@@ -311,7 +325,7 @@ export const VaultView = ({
                                 <div className="flex justify-center mt-14">
                                     <button
                                         onClick={onLoadMore}
-                                        className="bg-white/70 backdrop-blur-md hover:bg-white text-stone-800 border border-white/60 px-8 py-3 rounded-full font-medium transition-all shadow-md hover:shadow-lg flex items-center gap-2"
+                                        className="vault-surface bg-white/70 backdrop-blur-md hover:bg-white text-stone-800 border border-white/60 px-8 py-3 rounded-full font-medium transition-all shadow-md hover:shadow-lg flex items-center gap-2"
                                     >
                                         <Icons.Refresh /> Load More Memories
                                     </button>
@@ -325,29 +339,26 @@ export const VaultView = ({
             {/* TAB 2: CONSTANT ALBUMS VIEW */}
             {vaultCategory === 'constant' && (
                 <div className="w-full min-h-[55vh] relative z-10">
-                    <div className="mb-8 px-2 min-h-[60px] flex flex-col justify-center">
-                        <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-4 flex-1">
-                                <h3 className="text-2xl sm:text-3xl font-serif font-bold text-stone-800 tracking-tight shrink-0">
-                                    Constant Collections 📌
-                                </h3>
-                                <div className="h-[2px] flex-1 bg-gradient-to-r from-stone-400/70 via-stone-300/50 to-transparent rounded-full" />
-                            </div>
-                            <button
-                                type="button"
-                                onClick={onOpenAddModal}
-                                className="bg-stone-900 hover:bg-stone-800 text-white px-4 py-2 rounded-full text-xs font-bold shadow-md transition-all shrink-0 cursor-pointer"
-                            >
-                                + New Constant Folder
-                            </button>
+                    <div className="mb-8 px-2 flex items-center justify-between gap-4">
+                        <div>
+                            <h3 className="text-2xl sm:text-3xl font-serif font-bold text-stone-800 tracking-tight">
+                                Constant Collections 📌
+                            </h3>
+                            <p className="text-xs text-stone-500 mt-1">
+                                Timeless folders like Daily Widget Snaps and Favorites not tied to a single month.
+                            </p>
                         </div>
-                        <p className="text-xs text-stone-500 mt-1.5">
-                            Timeless folders like Daily Widget Snaps and Favorites not tied to a single month.
-                        </p>
+                        <button
+                            type="button"
+                            onClick={onOpenAddModal}
+                            className="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-md transition-all shrink-0 cursor-pointer"
+                        >
+                            + New Constant Folder
+                        </button>
                     </div>
 
                     {categorizedMemories.constant.length === 0 ? (
-                        <div className="text-center py-16 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-10 shadow-lg max-w-xl mx-auto">
+                        <div className="vault-surface text-center py-16 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-10 shadow-lg max-w-xl mx-auto">
                             <span className="text-5xl mb-3 block">📌</span>
                             <p className="text-lg font-serif font-bold text-stone-700">No Constant Folders Yet</p>
                             <p className="text-xs text-stone-500 mt-1 mb-5">
@@ -373,6 +384,7 @@ export const VaultView = ({
                                     onToggleConstant={onToggleConstant}
                                     onTogglePrivate={onTogglePrivate}
                                     onCycleTheme={onCycleTheme}
+                                    onSetTimeCapsule={onSetTimeCapsule}
                                     onDeleteClick={onDeleteAlbum}
                                 />
                             ))}
@@ -384,27 +396,24 @@ export const VaultView = ({
             {/* TAB 3: PRIVATE VAULT VIEW */}
             {vaultCategory === 'private' && (
                 <div className="w-full min-h-[55vh] relative z-10">
-                    <div className="mb-8 px-2 min-h-[60px] flex flex-col justify-center">
-                        <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-4 flex-1">
-                                <h3 className="text-2xl sm:text-3xl font-serif font-bold text-stone-800 tracking-tight shrink-0">
-                                    Private Sanctuary 🔒
-                                </h3>
-                                <div className="h-[2px] flex-1 bg-gradient-to-r from-stone-400/70 via-stone-300/50 to-transparent rounded-full" />
-                            </div>
-                            {isPrivateUnlocked && (
-                                <button
-                                    type="button"
-                                    onClick={() => setIsPrivateUnlocked(false)}
-                                    className="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-md transition-all shrink-0 cursor-pointer"
-                                >
-                                    🔒 Lock Sanctuary
-                                </button>
-                            )}
+                    <div className="mb-8 px-2 flex items-center justify-between gap-4">
+                        <div>
+                            <h3 className="text-2xl sm:text-3xl font-serif font-bold text-stone-800 tracking-tight">
+                                Private Sanctuary 🔒
+                            </h3>
+                            <p className="text-xs text-stone-500 mt-1">
+                                Protected by your 4-digit secret PIN.
+                            </p>
                         </div>
-                        <p className="text-xs text-stone-500 mt-1.5">
-                            Protected by your 4-digit secret PIN.
-                        </p>
+                        {isPrivateUnlocked && (
+                            <button
+                                type="button"
+                                onClick={() => setIsPrivateUnlocked(false)}
+                                className="bg-rose-500 hover:bg-rose-600 text-white px-4 py-2 rounded-full text-xs font-bold shadow-md transition-all shrink-0 cursor-pointer"
+                            >
+                                🔒 Lock Sanctuary
+                            </button>
+                        )}
                     </div>
 
                     {!isPrivateUnlocked ? (
@@ -413,7 +422,7 @@ export const VaultView = ({
                             showDialog={showDialog}
                         />
                     ) : categorizedMemories.priv.length === 0 ? (
-                        <div className="text-center py-16 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-10 shadow-lg max-w-xl mx-auto">
+                        <div className="vault-surface text-center py-16 text-stone-500 bg-white/50 backdrop-blur-md rounded-3xl border border-white/60 p-10 shadow-lg max-w-xl mx-auto">
                             <span className="text-5xl mb-3 block">🔒</span>
                             <p className="text-lg font-serif font-bold text-stone-700">Your Private Sanctuary is Empty</p>
                             <p className="text-xs text-stone-500 mt-1 mb-5">
@@ -439,6 +448,7 @@ export const VaultView = ({
                                     onToggleConstant={onToggleConstant}
                                     onTogglePrivate={onTogglePrivate}
                                     onCycleTheme={onCycleTheme}
+                                    onSetTimeCapsule={onSetTimeCapsule}
                                     onDeleteClick={onDeleteAlbum}
                                 />
                             ))}

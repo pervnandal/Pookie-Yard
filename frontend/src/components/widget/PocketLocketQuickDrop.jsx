@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Icons } from '../common/Icons';
 import { API_BASE_URL } from '../../utils/apiUtils';
 import { parseMediaUrl } from '../../utils/mediaParser';
+import { getCurrentPartnerRole, getPartnerNames } from '../../utils/userIdentity';
 import { requestLockScreenNotifications, triggerLocalLockScreenAlert } from '../../utils/pwaPushUtils';
 
 const STICKY_COLORS = [
@@ -13,11 +14,17 @@ const STICKY_COLORS = [
 
 export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDialog }) => {
     const [activeTab, setActiveTab] = useState('locket'); // 'locket' | 'drop' | 'setup'
+    const [previewPerspective, setPreviewPerspective] = useState('partner'); // 'partner' | 'mine' | 'pookie'
     const [widgetData, setWidgetData] = useState(null);
     const [loading, setLoading] = useState(false);
 
-    // Drop Form State
-    const [senderName, setSenderName] = useState(() => localStorage.getItem('us_locket_sender') || 'Your Pookie');
+    const partnerRole = getCurrentPartnerRole();
+    const names = getPartnerNames();
+    const myName = names[partnerRole] || (partnerRole === 'partner_his' ? 'Parv' : 'Pookie');
+    const partnerName =
+        names[partnerRole === 'partner_his' ? 'partner_her' : 'partner_his'] ||
+        (partnerRole === 'partner_his' ? 'Her' : 'Him');
+
     const [partnerCity, setPartnerCity] = useState(() => localStorage.getItem('us_locket_city') || 'Faridabad');
     const [noteText, setNoteText] = useState('');
     const [selectedColor, setSelectedColor] = useState(STICKY_COLORS[0].hex);
@@ -29,7 +36,6 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
         typeof Notification !== 'undefined' && Notification.permission === 'granted'
     );
 
-    // Live Camera Capture State
     const [isCameraOpen, setIsCameraOpen] = useState(false);
     const videoRef = useRef(null);
     const streamRef = useRef(null);
@@ -37,7 +43,9 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
     const fetchWidgetState = async (forceIdle = false) => {
         setLoading(true);
         try {
-            const res = await fetch(`${API_BASE_URL}/api/widget/state${forceIdle ? '?force_idle=true' : ''}`);
+            const res = await fetch(
+                `${API_BASE_URL}/api/widget/state?viewer_role=${partnerRole}${forceIdle ? '&force_idle=true' : ''}`
+            );
             if (res.ok) {
                 const data = await res.json();
                 setWidgetData(data);
@@ -55,7 +63,7 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
         } else {
             stopCamera();
         }
-    }, [isOpen]);
+    }, [isOpen, partnerRole]);
 
     const startCamera = async () => {
         try {
@@ -114,13 +122,13 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
         if (!noteText.trim() && !photoFile) return;
 
         setIsSending(true);
-        localStorage.setItem('us_locket_sender', senderName);
         localStorage.setItem('us_locket_city', partnerCity);
 
         try {
             const formData = new FormData();
             formData.append('note', noteText.trim());
-            formData.append('sender_name', senderName.trim() || 'Your Love');
+            formData.append('sender_name', myName);
+            formData.append('sender_role', partnerRole);
             formData.append('color', selectedColor);
             formData.append('partner_city', partnerCity.trim() || 'Faridabad');
             if (photoFile) formData.append('file', photoFile);
@@ -135,13 +143,14 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                 setNoteText('');
                 setPhotoFile(null);
                 setPhotoPreview('');
+                setPreviewPerspective('mine');
                 setActiveTab('locket');
                 fetchWidgetState(false);
 
                 if (notifEnabled) {
                     triggerLocalLockScreenAlert(
-                        `📱 Pocket Locket Updated!`,
-                        data.card?.note || 'New Polaroid dropped onto your home screen 💕'
+                        `📱 Sent to ${partnerName}'s 4×4 Widget!`,
+                        data.card?.note || 'Your Polaroid is now live on their widget 💕'
                     );
                 }
             }
@@ -155,7 +164,10 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
     const handleSaveToVault = async () => {
         setIsSavingToVault(true);
         try {
-            const res = await fetch(`${API_BASE_URL}/api/widget/save-to-vault`, { method: 'POST' });
+            const res = await fetch(
+                `${API_BASE_URL}/api/widget/save-to-vault?viewer_role=${partnerRole}`,
+                { method: 'POST' }
+            );
             if (res.ok) {
                 showDialog({
                     type: 'alert',
@@ -174,23 +186,35 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
 
     if (!isOpen) return null;
 
-    const currentCard = widgetData?.card;
-    const parsedCardImg = currentCard?.image_url ? parseMediaUrl(currentCard.image_url) : null;
+    // Select which card to display in the preview based on perspective toggle
+    const partnerDrop =
+        partnerRole === 'partner_his' ? widgetData?.her_drop : widgetData?.his_drop;
+    const mySentDrop =
+        partnerRole === 'partner_his' ? widgetData?.his_drop : widgetData?.her_drop;
+
+    const displayedCard =
+        previewPerspective === 'mine' && mySentDrop
+            ? mySentDrop
+            : previewPerspective === 'partner' && partnerDrop
+                ? partnerDrop
+                : widgetData?.card;
+
+    const parsedCardImg = displayedCard?.image_url ? parseMediaUrl(displayedCard.image_url) : null;
+    const myWidgetSvgUrl = `${API_BASE_URL}/api/widget/card.svg?for=${partnerRole}`;
 
     return (
         <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-stone-950/65 backdrop-blur-md animate-in fade-in duration-200">
-            <div className="bg-white/95 backdrop-blur-2xl border border-white/80 rounded-[2.25rem] max-w-lg w-full p-6 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto custom-scrollbar">
+            <div className="bg-white/95 backdrop-blur-2xl border border-white/80 rounded-[2.25rem] max-w-lg w-full p-6 sm:p-8 shadow-2xl relative max-h-[92vh] overflow-y-auto custom-scrollbar text-stone-800">
 
-                {/* Header */}
                 <div className="flex items-center justify-between mb-5">
                     <div className="flex items-center gap-2.5">
                         <span className="text-2xl">📱</span>
                         <div>
                             <h2 className="text-xl sm:text-2xl font-serif font-bold text-stone-800 leading-tight">
-                                Pookie’s Pocket Locket
+                                Pookie’s 4×4 Pocket Locket
                             </h2>
                             <p className="text-[11px] text-stone-500">
-                                AI-Smart Home Screen Widget · Polaroid & Sticky Note Drops
+                                Viewing as <b>{myName}</b> · You see what <b>{partnerName}</b> uploads for you!
                             </p>
                         </div>
                     </div>
@@ -202,12 +226,12 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                     </button>
                 </div>
 
-                {/* Navigation Pills */}
-                <div className="grid grid-cols-3 gap-1.5 bg-stone-100 p-1 rounded-2xl border border-stone-200 mb-6">
+                {/* Main Modal Tabs */}
+                <div className="grid grid-cols-3 gap-1.5 bg-stone-100 p-1 rounded-2xl border border-stone-200 mb-5">
                     {[
-                        { id: 'locket', label: '✨ Live Widget' },
-                        { id: 'drop', label: '📸 Send Drop' },
-                        { id: 'setup', label: '🔔 Phone Setup' }
+                        { id: 'locket', label: '🖼️ 4×4 Widget' },
+                        { id: 'drop', label: `📤 Send to ${partnerName}` },
+                        { id: 'setup', label: '📲 4×4 Wallpaper Setup' }
                     ].map((t) => (
                         <button
                             key={t.id}
@@ -221,111 +245,134 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                     ))}
                 </div>
 
-                {/* TAB 1: LIVE WIDGET PREVIEW (Shows Partner Drop OR Pookie's Idle Magic) */}
+                {/* TAB 1: 4x4 LIVE WIDGET DISPLAY */}
                 {activeTab === 'locket' && (
-                    <div className="space-y-5">
-                        {loading || !currentCard ? (
-                            <div className="h-64 flex items-center justify-center">
-                                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-rose-500" />
-                            </div>
-                        ) : (
-                            <div
-                                style={{ backgroundColor: currentCard.color || '#fff1f2', color: currentCard.textColor || '#1c1917' }}
-                                className="w-full max-w-[330px] mx-auto rounded-[2rem] p-5 shadow-xl border-2 border-white relative overflow-hidden transition-all"
-                            >
-                                <div className="flex items-center justify-between gap-2 mb-3">
-                                    <span className="text-[11px] font-bold px-3 py-1 rounded-full bg-black/10 backdrop-blur-xs">
-                                        {currentCard.badge}
-                                    </span>
-                                    <span className="text-[10px] font-mono opacity-65">{currentCard.updated_at}</span>
-                                </div>
-
-                                {parsedCardImg && (
-                                    <div className="bg-white p-2 pb-4 rounded-2xl shadow-md mb-3.5 rotate-1">
-                                        <img
-                                            src={parsedCardImg.thumb || parsedCardImg.original}
-                                            alt="Pocket Locket Polaroid"
-                                            className="w-full h-48 object-cover rounded-xl"
-                                        />
-                                    </div>
-                                )}
-
-                                <h3 className="font-serif font-bold text-lg leading-snug mb-1">{currentCard.title}</h3>
-                                <p className="text-sm leading-relaxed opacity-90 whitespace-pre-wrap">{currentCard.note}</p>
-
-                                {/* 1-Tap Save to Daily Snaps Constant Album */}
-                                {currentCard.image_url && widgetData?.status === 'active' && (
-                                    <div className="mt-4 pt-3 border-t border-black/10 flex justify-end">
-                                        <button
-                                            type="button"
-                                            disabled={isSavingToVault || currentCard.saved_to_vault}
-                                            onClick={handleSaveToVault}
-                                            className="bg-stone-900 hover:bg-rose-600 disabled:bg-emerald-600 text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-sm transition-colors cursor-pointer"
-                                        >
-                                            {currentCard.saved_to_vault
-                                                ? '✓ Saved in Constant Albums'
-                                                : isSavingToVault
-                                                    ? 'Saving...'
-                                                    : '📌 Save to Daily Snaps Album'}
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
-                        <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2">
+                    <div className="space-y-4">
+                        {/* Perspective Switcher: What Partner Sent Me vs What I Sent Partner vs Pookie Idle Note */}
+                        <div className="flex items-center justify-center gap-1.5 flex-wrap">
                             <button
                                 type="button"
-                                onClick={() => setActiveTab('drop')}
-                                className="bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold px-5 py-2.5 rounded-full shadow-md transition-all cursor-pointer"
+                                onClick={() => {
+                                    setPreviewPerspective('partner');
+                                    fetchWidgetState(false);
+                                }}
+                                className={`px-3 py-1 rounded-full text-[11px] font-bold cursor-pointer ${previewPerspective === 'partner'
+                                        ? 'bg-rose-500 text-white'
+                                        : 'bg-stone-100 text-stone-600'
+                                    }`}
                             >
-                                📸 Drop New Selfie or Note
+                                💌 From {partnerName} {partnerDrop ? '●' : '(None yet)'}
                             </button>
                             <button
                                 type="button"
-                                onClick={() => fetchWidgetState(true)}
-                                className="bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-bold px-4 py-2.5 rounded-full transition-all cursor-pointer"
-                                title="Preview what Pookie shows when neither of you posts for 8 hours"
+                                onClick={() => {
+                                    setPreviewPerspective('mine');
+                                    fetchWidgetState(false);
+                                }}
+                                className={`px-3 py-1 rounded-full text-[11px] font-bold cursor-pointer ${previewPerspective === 'mine'
+                                        ? 'bg-stone-900 text-white'
+                                        : 'bg-stone-100 text-stone-600'
+                                    }`}
                             >
-                                ✨ Preview Pookie Idle Magic
+                                📤 Sent by Me ({myName}) {mySentDrop ? '●' : ''}
+                            </button>
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setPreviewPerspective('pookie');
+                                    fetchWidgetState(true);
+                                }}
+                                className={`px-3 py-1 rounded-full text-[11px] font-bold cursor-pointer ${previewPerspective === 'pookie'
+                                        ? 'bg-amber-500 text-white'
+                                        : 'bg-stone-100 text-stone-600'
+                                    }`}
+                            >
+                                🌸 Pookie’s Shared Note
+                            </button>
+                        </div>
+
+                        {loading || !displayedCard ? (
+                            <div className="h-72 flex items-center justify-center">
+                                <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-rose-500" />
+                            </div>
+                        ) : (
+                            /* 4x4 Square Duolingo-Style Graphic Widget Card */
+                            <div
+                                style={{
+                                    backgroundColor: displayedCard.color || '#fff1f2',
+                                    color: displayedCard.textColor || '#1c1917'
+                                }}
+                                className="w-full aspect-square max-w-[360px] mx-auto rounded-[2.5rem] p-6 shadow-2xl border-4 border-white flex flex-col justify-between relative overflow-hidden transition-all"
+                            >
+                                <div className="flex items-center justify-between gap-2">
+                                    <span className="text-xs font-extrabold px-3.5 py-1 rounded-full bg-black/10 backdrop-blur-xs">
+                                        {displayedCard.badge}
+                                    </span>
+                                    <span className="text-[11px] font-mono opacity-70">{displayedCard.updated_at}</span>
+                                </div>
+
+                                {parsedCardImg ? (
+                                    <div className="my-2.5 flex-1 min-h-0 bg-white p-2 rounded-3xl shadow-md rotate-1 overflow-hidden flex items-center justify-center">
+                                        <img
+                                            src={parsedCardImg.thumb || parsedCardImg.original}
+                                            alt="Pocket Locket Polaroid"
+                                            className="w-full h-full object-cover rounded-2xl"
+                                        />
+                                    </div>
+                                ) : (
+                                    <div className="my-auto text-center">
+                                        <span className="text-6xl block mb-2">🌸</span>
+                                    </div>
+                                )}
+
+                                <div>
+                                    <h3 className="font-serif font-bold text-xl leading-snug mb-1">{displayedCard.title}</h3>
+                                    <p className="text-sm leading-relaxed opacity-90 line-clamp-3 whitespace-pre-wrap">
+                                        {displayedCard.note}
+                                    </p>
+
+                                    {displayedCard.image_url && (
+                                        <div className="mt-3 pt-2.5 border-t border-black/10 flex justify-end">
+                                            <button
+                                                type="button"
+                                                disabled={isSavingToVault || displayedCard.saved_to_vault}
+                                                onClick={handleSaveToVault}
+                                                className="bg-stone-900 hover:bg-rose-600 disabled:bg-emerald-600 text-white text-[11px] font-bold px-3.5 py-1.5 rounded-full shadow-sm transition-colors cursor-pointer"
+                                            >
+                                                {displayedCard.saved_to_vault
+                                                    ? '✓ Saved in Constant Albums'
+                                                    : isSavingToVault
+                                                        ? 'Saving...'
+                                                        : '📌 Save to Daily Snaps Album'}
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="flex justify-center pt-1">
+                            <button
+                                type="button"
+                                onClick={() => setActiveTab('drop')}
+                                className="bg-rose-500 hover:bg-rose-600 text-white text-xs font-bold px-6 py-3 rounded-full shadow-md transition-all cursor-pointer"
+                            >
+                                📸 Upload Photo / Note for {partnerName}’s Widget
                             </button>
                         </div>
                     </div>
                 )}
 
-                {/* TAB 2: SEND A POLAROID SELFIE OR STICKY NOTE DROP */}
+                {/* TAB 2: UPLOAD PHOTO OR NOTE FOR PARTNER */}
                 {activeTab === 'drop' && (
                     <form onSubmit={handleSendDrop} className="space-y-4">
-                        <div className="grid grid-cols-2 gap-3">
-                            <div>
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-500 mb-1">
-                                    Your Nickname
-                                </label>
-                                <input
-                                    type="text"
-                                    value={senderName}
-                                    onChange={(e) => setSenderName(e.target.value)}
-                                    className="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-400"
-                                />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-500 mb-1">
-                                    Partner's City (Weather Magic)
-                                </label>
-                                <input
-                                    type="text"
-                                    value={partnerCity}
-                                    onChange={(e) => setPartnerCity(e.target.value)}
-                                    placeholder="e.g., Faridabad, Delhi..."
-                                    className="w-full bg-white border border-stone-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-rose-400"
-                                />
-                            </div>
+                        <div className="bg-rose-50/70 border border-rose-200/80 rounded-2xl p-3 text-xs text-rose-800 font-medium">
+                            ✨ Uploading as <b>{myName}</b> — this will appear directly on <b>{partnerName}’s 4×4 widget</b>!
                         </div>
 
-                        {/* Camera / Photo Picker */}
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
-                                1-Tap Polaroid Selfie (Optional)
+                                1-Tap Polaroid Selfie or Photo
                             </label>
 
                             {isCameraOpen ? (
@@ -349,7 +396,7 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                                     </div>
                                 </div>
                             ) : photoPreview ? (
-                                <div className="relative w-36 h-36 mx-auto mb-2 rounded-2xl overflow-hidden shadow-md border border-stone-200">
+                                <div className="relative w-40 h-40 mx-auto mb-2 rounded-2xl overflow-hidden shadow-md border border-stone-200">
                                     <img src={photoPreview} alt="Preview" className="w-full h-full object-cover" />
                                     <button
                                         type="button"
@@ -367,7 +414,7 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                                     <button
                                         type="button"
                                         onClick={startCamera}
-                                        className="flex-1 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold transition-colors"
+                                        className="flex-1 py-2.5 bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
                                     >
                                         📷 Open Live Camera
                                     </button>
@@ -379,33 +426,31 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                             )}
                         </div>
 
-                        {/* Sticky Note Text */}
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-500 mb-1">
-                                Sticky Note / Polaroid Caption
+                                Note for {partnerName}’s Home Screen
                             </label>
                             <textarea
                                 rows={3}
                                 value={noteText}
                                 onChange={(e) => setNoteText(e.target.value)}
-                                placeholder="Write a cute note for your partner's phone home screen..."
+                                placeholder={`Write a sweet note for ${partnerName}...`}
                                 className="w-full bg-white border border-stone-200 rounded-xl p-3 text-sm focus:outline-none focus:border-rose-400 resize-none"
                             />
                         </div>
 
-                        {/* Pastel Color Picker */}
                         <div>
                             <label className="block text-[10px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
-                                Card Pastel Tint
+                                4×4 Card Background Tint
                             </label>
-                            <div className="flex items-center gap-2.5">
+                            <div className="flex items-center gap-2 flex-wrap">
                                 {STICKY_COLORS.map((c) => (
                                     <button
                                         key={c.hex}
                                         type="button"
                                         onClick={() => setSelectedColor(c.hex)}
                                         style={{ backgroundColor: c.hex }}
-                                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold text-stone-700 border transition-all ${selectedColor === c.hex ? 'ring-2 ring-rose-500 scale-105' : c.border
+                                        className={`px-3 py-1.5 rounded-xl text-[11px] font-bold text-stone-700 border transition-all cursor-pointer ${selectedColor === c.hex ? 'ring-2 ring-rose-500 scale-105' : c.border
                                             }`}
                                     >
                                         {c.name}
@@ -417,64 +462,45 @@ export const PocketLocketQuickDrop = ({ isOpen, onClose, onSavedToVault, showDia
                         <button
                             type="submit"
                             disabled={isSending || (!noteText.trim() && !photoFile)}
-                            className="w-full py-3 bg-stone-900 hover:bg-stone-800 disabled:opacity-50 text-white rounded-2xl text-xs font-bold shadow-lg transition-all cursor-pointer"
+                            className="w-full py-3 bg-stone-900 hover:bg-rose-600 disabled:opacity-50 text-white rounded-2xl text-xs font-bold shadow-lg transition-all cursor-pointer"
                         >
-                            {isSending ? 'Pinning to Home Screen...' : '🚀 Send to Partner’s Pocket Locket'}
+                            {isSending ? 'Updating Widget...' : `🚀 Pin to ${partnerName}’s 4×4 Widget`}
                         </button>
                     </form>
                 )}
 
-                {/* TAB 3: PHONE HOME SCREEN & LOCK SCREEN NOTIFICATION SETUP */}
+                {/* TAB 3: HOW TO ADD AS A 4x4 WALLPAPER WIDGET (LIKE DUOLINGO) WITHOUT REDIRECTING */}
                 {activeTab === 'setup' && (
                     <div className="space-y-4 text-xs text-stone-600 leading-relaxed">
-                        <div className="bg-rose-50/80 border border-rose-200 rounded-2xl p-4">
+                        <div className="bg-amber-50/90 border border-amber-200 rounded-2xl p-4">
                             <h4 className="font-serif font-bold text-sm text-stone-800 mb-1">
-                                1. Enable Rich Lock Screen Alerts 🔔
-                            </h4>
-                            <p className="mb-3">
-                                Get instant lock-screen banners with heartbeat vibration whenever your partner drops a new Polaroid or note.
-                            </p>
-                            <button
-                                type="button"
-                                onClick={async () => {
-                                    const granted = await requestLockScreenNotifications();
-                                    setNotifEnabled(granted);
-                                    if (granted) {
-                                        triggerLocalLockScreenAlert(
-                                            '🌸 Lock Screen Alerts Active!',
-                                            'You will now receive Pookie’s Pocket Locket drops right on your lock screen.'
-                                        );
-                                    }
-                                }}
-                                className={`px-4 py-2 rounded-full font-bold text-xs shadow-sm transition-all ${notifEnabled
-                                        ? 'bg-emerald-600 text-white'
-                                        : 'bg-stone-900 hover:bg-rose-600 text-white'
-                                    }`}
-                            >
-                                {notifEnabled ? '✓ Lock Screen Alerts Enabled' : '🔔 Enable Lock Screen Alerts'}
-                            </button>
-                        </div>
-
-                        <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4">
-                            <h4 className="font-serif font-bold text-sm text-stone-800 mb-1">
-                                2. Install as Full-Screen Phone App (PWA) 📲
+                                Why Browser “Install App” Created a 1×1 Icon (And How to Get the 4×4 Wallpaper Card!)
                             </h4>
                             <p>
-                                • <b>iPhone (Safari):</b> Tap <b>Share</b> → <b>Add to Home Screen</b>.<br />
-                                • <b>Android (Chrome/Edge):</b> Tap the browser menu <b>⋮</b> → <b>Install App / Add to Home Screen</b>.
+                                Chrome’s <i>“Add to Home Screen”</i> only creates a 1×1 app launcher icon. To put a <b>large 4×4 live graphic card on your wallpaper</b> (like Duolingo) that shows {partnerName}’s photos & notes live <b>without opening the browser</b>:
                             </p>
                         </div>
 
-                        <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4">
-                            <h4 className="font-serif font-bold text-sm text-stone-800 mb-1">
-                                3. Live Home Screen Widget URL 🖼️
+                        <div className="bg-stone-50 border border-stone-200 rounded-2xl p-4 space-y-2">
+                            <h4 className="font-serif font-bold text-sm text-stone-800">
+                                Your Personal 4×4 Live Graphic Feed URL (Shows {partnerName}’s Drops):
                             </h4>
-                            <p className="mb-2">
-                                Use this live image URL in <b>Web Widget / KWGT</b> (Android) or <b>Scriptable</b> (iOS) to display the live card right on your wallpaper:
-                            </p>
-                            <div className="bg-white border border-stone-200 rounded-xl p-2 font-mono text-[11px] text-rose-600 select-all break-all">
-                                {`${API_BASE_URL}/api/widget/card.svg`}
+                            <div className="bg-white border border-stone-200 rounded-xl p-2.5 font-mono text-[11px] text-rose-600 select-all break-all">
+                                {myWidgetSvgUrl}
                             </div>
+                            <p className="text-[11px] text-stone-500">
+                                • <b>Android (4×4 Wallpaper Card):</b> Install the free <b>KWGT</b> or <b>Widgeet / Image Widget</b> app → Add a <b>4×4 Widget</b> on your home screen → Paste the URL above as the Image URL and set Touch Action to <b>None / Refresh</b> (so tapping refreshes the image in place without opening the browser!).<br />
+                                • <b>iPhone (4×4 Large Scriptable Widget):</b> Install the free <b>Scriptable</b> app, add a Large (4×4) Scriptable widget to your home screen, and paste this 6-line script:
+                            </p>
+                            <pre className="bg-stone-900 text-rose-200 p-3 rounded-xl text-[10px] overflow-x-auto select-all">
+                                {`const req = new Request("${API_BASE_URL}/api/widget/state?viewer_role=${partnerRole}");
+const res = await req.loadJSON();
+const w = new ListWidget();
+w.backgroundColor = new Color(res.card.color || "#fff1f2");
+const t = w.addText(res.card.badge + "\\n\\n" + res.card.title + "\\n" + res.card.note);
+t.textColor = new Color("#1c1917");
+Script.setWidget(w);`}
+                            </pre>
                         </div>
                     </div>
                 )}

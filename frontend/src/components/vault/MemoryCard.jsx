@@ -3,7 +3,35 @@ import GlassFolder from '../ui/glass-folder-cards';
 import { parseMediaUrl, captureVideoFrame, preloadHighResImage } from '../../utils/mediaParser';
 import { extractVaultMeta } from '../../utils/vaultMetaUtils';
 
-const ART_PRESETS_CYCLE = ['aurora', 'dusk', 'ember', 'glacier', 'verdant'];
+export const ART_PRESETS_CYCLE = ['aurora', 'ember', 'dusk', 'glacier', 'verdant'];
+
+const GLASS_TINT_STYLES = {
+  aurora: {
+    ring: 'ring-2 ring-rose-300/70 rounded-[28px]',
+    badge: '🌸 Rose Glass',
+    overlay: 'linear-gradient(135deg, rgba(244,63,94,0.18) 0%, rgba(251,113,133,0.06) 100%)'
+  },
+  ember: {
+    ring: 'ring-2 ring-stone-700/80 rounded-[28px]',
+    badge: '🖤 Obsidian Glass',
+    overlay: 'linear-gradient(135deg, rgba(15,23,42,0.45) 0%, rgba(244,63,94,0.18) 100%)'
+  },
+  dusk: {
+    ring: 'ring-2 ring-purple-400/75 rounded-[28px]',
+    badge: '🔮 Violet Dusk',
+    overlay: 'linear-gradient(135deg, rgba(168,85,247,0.28) 0%, rgba(99,102,241,0.14) 100%)'
+  },
+  glacier: {
+    ring: 'ring-2 ring-sky-400/75 rounded-[28px]',
+    badge: '🧊 Glacier Blue',
+    overlay: 'linear-gradient(135deg, rgba(14,165,233,0.28) 0%, rgba(56,189,248,0.12) 100%)'
+  },
+  verdant: {
+    ring: 'ring-2 ring-emerald-400/75 rounded-[28px]',
+    badge: '🌿 Emerald Glass',
+    overlay: 'linear-gradient(135deg, rgba(16,185,129,0.28) 0%, rgba(250,204,21,0.14) 100%)'
+  }
+};
 
 class FolderErrorBoundary extends React.Component {
   constructor(props) {
@@ -38,7 +66,6 @@ export const MemoryCard = React.memo(({
 
   const { meta } = useMemo(() => extractVaultMeta(memory), [memory]);
 
-  // Check if this album is a locked future Time Capsule
   const capsuleStatus = useMemo(() => {
     if (!meta.unlockDate) return { isLocked: false, daysLeft: 0 };
     const unlockMs = new Date(`${meta.unlockDate}T00:00:00`).getTime();
@@ -86,10 +113,18 @@ export const MemoryCard = React.memo(({
     }
   }, [memory.memory_date, memory.formattedDate, meta.isConstant, capsuleStatus]);
 
-  const folderFiles = useMemo(() => {
-    const activeArt = meta.artPreset || ART_PRESETS_CYCLE[safeIndex % ART_PRESETS_CYCLE.length];
+  const activeArt = capsuleStatus.isLocked
+    ? 'dusk'
+    : meta.artPreset || ART_PRESETS_CYCLE[safeIndex % ART_PRESETS_CYCLE.length];
 
-    // Hide actual photo previews if locked in a Time Capsule so nobody can peek early
+  const activeTone =
+    capsuleStatus.isLocked || meta.isPrivate || activeArt === 'ember' || activeArt === 'dusk'
+      ? 'dark'
+      : 'light';
+
+  const tintConfig = GLASS_TINT_STYLES[activeArt] || GLASS_TINT_STYLES.aurora;
+
+  const folderFiles = useMemo(() => {
     if (capsuleStatus.isLocked) {
       return [
         {
@@ -130,7 +165,7 @@ export const MemoryCard = React.memo(({
         art: parsed.isVoice || !thumbUrl ? activeArt : undefined
       };
     });
-  }, [mediaList, memory.title, shortMonthDay, safeIndex, resolvedThumbs, meta, capsuleStatus]);
+  }, [mediaList, memory.title, shortMonthDay, resolvedThumbs, meta, capsuleStatus, activeArt]);
 
   const coverImage = useMemo(() => {
     if (capsuleStatus.isLocked) return undefined;
@@ -167,11 +202,6 @@ export const MemoryCard = React.memo(({
     });
   };
 
-  const activeArt = capsuleStatus.isLocked
-    ? 'dusk'
-    : meta.artPreset || ART_PRESETS_CYCLE[safeIndex % ART_PRESETS_CYCLE.length];
-  const activeTone = capsuleStatus.isLocked || meta.isPrivate ? 'dark' : meta.tone || 'light';
-
   const folderLabel = capsuleStatus.isLocked
     ? `⏳ ${memory.title || 'Time Capsule'}`
     : meta.isPrivate
@@ -180,15 +210,13 @@ export const MemoryCard = React.memo(({
         ? `📌 ${memory.title || 'Memory'}`
         : memory.title || 'Memory';
 
-  const locationSuffix = meta.locationName ? ` · 📍 ${meta.locationName}` : '';
-
   const fallbackCard = (
     <div
       onClick={() => onClick(memory, 0)}
       className="bg-white/60 backdrop-blur-xl rounded-3xl p-6 shadow-lg border border-white/60 cursor-pointer w-full max-w-[330px]"
     >
       <h3 className="text-xl font-serif font-bold text-stone-800">{folderLabel}</h3>
-      <p className="text-xs text-stone-500 mt-1">{shortMonthDay}{locationSuffix}</p>
+      <p className="text-xs text-stone-500 mt-1">{shortMonthDay}</p>
     </div>
   );
 
@@ -198,53 +226,63 @@ export const MemoryCard = React.memo(({
         className="flex flex-col items-center justify-end group relative select-none"
         onMouseEnter={warmAlbumPreviews}
       >
-        <GlassFolder
-          label={folderLabel}
-          meta={`${shortMonthDay} · ${mediaList.length} ${mediaList.length === 1 ? 'item' : 'items'}${locationSuffix}`}
-          tone={activeTone}
-          art={activeArt}
-          seed={seed}
-          image={coverImage}
-          files={folderFiles}
-          action="more"
-          labelPlacement="bottom-left"
-          width={330}
-          appear={false}
-          onFileSelect={(_, fileIdx) =>
-            onClick({ ...memory, initialMediaIndex: fileIdx, _openTrigger: Date.now() }, fileIdx)
-          }
-          menu={[
-            {
-              label: capsuleStatus.isLocked
-                ? `Sealed Until ${meta.unlockDate} ⏳`
-                : 'Open Album Gallery ✨',
-              onSelect: () => onClick(memory, 0)
-            },
-            { label: 'Edit Album Name ✏️', onSelect: () => onRenameClick && onRenameClick(memory) },
-            {
-              label: meta.isConstant ? 'Move to Timeline 📅' : 'Make Constant Album 📌',
-              onSelect: () => onToggleConstant && onToggleConstant(memory)
-            },
-            {
-              label: meta.isPrivate ? 'Make Standard (Public) 🌸' : 'Move to Private Vault 🔒',
-              onSelect: () => onTogglePrivate && onTogglePrivate(memory)
-            },
-            {
-              label: meta.unlockDate ? 'Edit / Unlock Time Capsule ⏳' : 'Lock as Time Capsule ⏳',
-              onSelect: () => onSetTimeCapsule && onSetTimeCapsule(memory)
-            },
-            {
-              label: 'Change Glass Theme 🎨',
-              onSelect: () => onCycleTheme && onCycleTheme(memory)
-            },
-            { label: 'Delete Entire Album', danger: true, onSelect: () => onDeleteClick(memory) }
-          ]}
-        />
+        {/* Visible Glass Theme Tint Overlay + Ring so every click of 'Change Glass Theme' visibly changes the folder */}
+        <div className={`relative transition-all duration-300 ${meta.artPreset ? tintConfig.ring : ''}`}>
+          {meta.artPreset && (
+            <div
+              style={{ background: tintConfig.overlay }}
+              className="absolute inset-0 rounded-[28px] pointer-events-none z-10 mix-blend-overlay transition-all duration-300"
+            />
+          )}
+
+          <GlassFolder
+            label={folderLabel}
+            meta={`${shortMonthDay} · ${mediaList.length} ${mediaList.length === 1 ? 'item' : 'items'}`}
+            tone={activeTone}
+            art={activeArt}
+            seed={seed}
+            image={coverImage}
+            files={folderFiles}
+            action="more"
+            labelPlacement="bottom-left"
+            width={330}
+            appear={false}
+            onFileSelect={(_, fileIdx) =>
+              onClick({ ...memory, initialMediaIndex: fileIdx, _openTrigger: Date.now() }, fileIdx)
+            }
+            menu={[
+              {
+                label: capsuleStatus.isLocked
+                  ? `Sealed Until ${meta.unlockDate} ⏳`
+                  : 'Open Album Gallery ✨',
+                onSelect: () => onClick(memory, 0)
+              },
+              { label: 'Edit Album Name ✏️', onSelect: () => onRenameClick && onRenameClick(memory) },
+              {
+                label: meta.isConstant ? 'Move to Timeline 📅' : 'Make Constant Album 📌',
+                onSelect: () => onToggleConstant && onToggleConstant(memory)
+              },
+              {
+                label: meta.isPrivate ? 'Make Standard (Public) 🌸' : 'Move to Private Vault 🔒',
+                onSelect: () => onTogglePrivate && onTogglePrivate(memory)
+              },
+              {
+                label: meta.unlockDate ? 'Edit / Unlock Time Capsule ⏳' : 'Lock as Time Capsule ⏳',
+                onSelect: () => onSetTimeCapsule && onSetTimeCapsule(memory)
+              },
+              {
+                label: `Glass Theme: ${tintConfig.badge} 🎨`,
+                onSelect: () => onCycleTheme && onCycleTheme(memory, activeArt)
+              },
+              { label: 'Delete Entire Album', danger: true, onSelect: () => onDeleteClick(memory) }
+            ]}
+          />
+        </div>
 
         <button
           type="button"
           onClick={() => onClick(memory, 0)}
-          className="mt-2.5 px-4 py-1.5 rounded-full bg-white/60 hover:bg-white/95 backdrop-blur-md border border-white/75 text-xs font-medium text-stone-600 hover:text-rose-600 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
+          className="vault-surface mt-2.5 px-4 py-1.5 rounded-full bg-white/60 hover:bg-white/95 backdrop-blur-md border border-white/75 text-xs font-medium text-stone-600 hover:text-rose-600 shadow-sm transition-all flex items-center gap-1.5 cursor-pointer"
         >
           {capsuleStatus.isLocked ? (
             <span className="font-semibold text-amber-700">
