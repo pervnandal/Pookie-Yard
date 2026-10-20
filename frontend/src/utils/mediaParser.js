@@ -19,12 +19,9 @@ const saveVideoFrameToStorage = (url, dataUrl) => {
   try {
     const obj = Object.fromEntries(videoFrameCache.entries());
     localStorage.setItem(VIDEO_THUMB_STORAGE_KEY, JSON.stringify(obj));
-  } catch {}
+  } catch { }
 };
 
-/**
- * Deduplicated native browser HTTP disk-cache preloader.
- */
 export const preloadAndCacheMedia = (url) => {
   if (!url || typeof Image === 'undefined' || preloadedSet.has(url)) return;
   preloadedSet.add(url);
@@ -91,6 +88,7 @@ export const captureVideoFrame = (videoUrl) => {
 export const parseMediaUrl = (rawUrl) => {
   if (!rawUrl) {
     return {
+      cloudId: '',
       original: '',
       thumb: '',
       thumbLow: '',
@@ -105,31 +103,28 @@ export const parseMediaUrl = (rawUrl) => {
   const isVideoPrefix = rawUrl.startsWith('video#');
   const cleanUrl = rawUrl.replace(/^(voice#|video#)/, '');
 
-  const backupDriveMatch = cleanUrl.match(/drive_id=([a-zA-Z0-9_-]+)/);
-  const backupDriveId = backupDriveMatch ? backupDriveMatch[1] : null;
-  const backupStreamUrl = backupDriveId ? `${API_BASE_URL}/api/drive-image/${backupDriveId}?size=original` : '';
-
-  // 1. YouTube Videos
+  // 1. YouTube Videos (Uses cloudId instead of id so database m.id is never overwritten;
+  //    does NOT call /api/drive-image/ on old deleted drive_id backups)
   const ytRegex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?|shorts)\/|.*[?&]v=)|youtu\.be\/|^yt:)([a-zA-Z0-9_-]{11})/;
   const ytMatch = cleanUrl.match(ytRegex);
 
   if (ytMatch && !cleanUrl.split('&drive_id=')[0].includes('drive.google.com')) {
     const videoId = ytMatch[1];
     return {
-      id: videoId,
-      driveId: backupDriveId,
+      cloudId: videoId,
+      youtubeId: videoId,
       original: `https://www.youtube.com/watch?v=${videoId}`,
       embedUrl: `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0&modestbranding=1&playsinline=1`,
       thumbLow: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
       thumb: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
-      videoStreamUrl: backupStreamUrl,
+      videoStreamUrl: '',
       isYoutube: true,
       isLegacyVideo: false,
       isVoice: false
     };
   }
 
-  // 2. Google Drive Media (3 distinct tiers: 15KB thumbLow, 90KB preview thumb, and raw original)
+  // 2. Google Drive Media (Photos, Voice Notes, or Drive-only Videos)
   const driveMatch = cleanUrl.match(/(?:id=|\/d\/|drive-image\/)([a-zA-Z0-9_-]+)/);
   const driveId = driveMatch ? driveMatch[1] : null;
   const isLegacyVideo = isVideoPrefix || /\.(mp4|mov|webm|mkv)(\?.*)?$/i.test(cleanUrl);
@@ -137,7 +132,7 @@ export const parseMediaUrl = (rawUrl) => {
   if (driveId) {
     const base = `${API_BASE_URL}/api/drive-image/${driveId}`;
     return {
-      id: driveId,
+      cloudId: driveId,
       driveId,
       original: `${base}?size=original`,
       thumb: isLegacyVideo || isVoice ? `${base}?size=original` : `${base}?size=preview`,
@@ -150,6 +145,7 @@ export const parseMediaUrl = (rawUrl) => {
   }
 
   return {
+    cloudId: cleanUrl,
     original: cleanUrl,
     thumbLow: cleanUrl,
     thumb: cleanUrl,

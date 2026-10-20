@@ -6,6 +6,7 @@ import time
 import shutil
 import tempfile
 import threading
+from typing import Optional
 import requests
 from requests.adapters import HTTPAdapter
 from dotenv import load_dotenv
@@ -16,6 +17,7 @@ from googleapiclient.http import MediaIoBaseUpload, MediaFileUpload
 
 try:
     import yt_dlp
+
     HAS_YTDLP = True
 except ImportError:
     HAS_YTDLP = False
@@ -38,6 +40,20 @@ _cached_creds = {}
 _ram_cache = {}
 MAX_RAM_CACHE_ITEMS = 80
 
+# Tracks deleted Google Drive IDs so we never hit 404 repeatedly
+_dead_drive_ids = set()
+
+
+class _QuietYtdlLogger:
+    def debug(self, msg):
+        pass
+
+    def warning(self, msg):
+        pass
+
+    def error(self, msg):
+        pass
+
 
 def find_token_file(filename: str) -> str:
     candidate_paths = [
@@ -46,7 +62,7 @@ def find_token_file(filename: str) -> str:
         os.path.join(ROOT_DIR, "secrets", filename),
         os.path.join(ROOT_DIR, filename),
         os.path.join("/etc/secrets", filename),
-        filename
+        filename,
     ]
     for path in candidate_paths:
         if os.path.isfile(path):
@@ -56,7 +72,9 @@ def find_token_file(filename: str) -> str:
         if filename in files:
             return os.path.join(root, filename)
 
-    raise FileNotFoundError(f"Could not find '{filename}' in backend/ or secrets/ folder.")
+    raise FileNotFoundError(
+        f"Could not find '{filename}' in backend/ or secrets/ folder."
+    )
 
 
 def load_credentials(token_filename: str) -> Credentials:
@@ -116,7 +134,9 @@ def _meta_cache_path(file_id: str) -> str:
     return os.path.join(DISK_CACHE_DIR, f"{safe_id}.meta")
 
 
-def _save_to_caches(file_id: str, size: str, data: bytes, mime_type: str, filename: str):
+def _save_to_caches(
+    file_id: str, size: str, data: bytes, mime_type: str, filename: str
+):
     cache_key = f"{file_id}:{size}"
     if size == "thumb" and len(data) < 350 * 1024:
         if len(_ram_cache) >= MAX_RAM_CACHE_ITEMS:
@@ -159,8 +179,9 @@ def _read_from_caches(file_id: str, size: str):
     return None
 
 
-def upload_raw_to_drive(file_obj, filename: str, mime_type: str, drive_service=None) -> str:
-    """Streams photos and voice notes directly to Google Drive."""
+def upload_raw_to_drive(
+    file_obj, filename: str, mime_type: str, drive_service=None
+) -> str:
     if drive_service is None:
         drive_service = get_drive_service()
     folder_id = get_drive_folder_id()
@@ -178,13 +199,10 @@ def upload_raw_to_drive(file_obj, filename: str, mime_type: str, drive_service=N
         file_obj,
         mimetype=mime_type or "application/octet-stream",
         chunksize=1024 * 1024 * 4,
-        resumable=True
+        resumable=True,
     )
     request = drive_service.files().create(
-        body=file_metadata,
-        media_body=media,
-        fields="id",
-        supportsAllDrives=True
+        body=file_metadata, media_body=media, fields="id", supportsAllDrives=True
     )
 
     response = None
@@ -197,7 +215,7 @@ def upload_raw_to_drive(file_obj, filename: str, mime_type: str, drive_service=N
         drive_service.permissions().create(
             fileId=file_id,
             body={"type": "anyone", "role": "reader"},
-            supportsAllDrives=True
+            supportsAllDrives=True,
         ).execute()
     except Exception:
         pass
@@ -206,17 +224,18 @@ def upload_raw_to_drive(file_obj, filename: str, mime_type: str, drive_service=N
 
 
 def upload_to_drive(file_obj, filename: str, mime_type: str, drive_service=None) -> str:
-    file_id = upload_raw_to_drive(file_obj, filename, mime_type, drive_service=drive_service)
+    file_id = upload_raw_to_drive(
+        file_obj, filename, mime_type, drive_service=drive_service
+    )
 
     if mime_type and mime_type.startswith("audio/"):
         return f"voice#https://drive.google.com/uc?id={file_id}&export=download"
     return f"https://drive.google.com/uc?id={file_id}&export=view"
 
 
-def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: str = "video/mp4") -> str:
-    """
-    Uploads videos EXCLUSIVELY to YouTube (does NOT save videos to Google Drive).
-    """
+def upload_to_youtube(
+    file_obj, title: str, description: str = "", mime_type: str = "video/mp4"
+) -> str:
     temp_path = None
     try:
         suffix = ".mp4"
@@ -238,27 +257,35 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
             "snippet": {
                 "title": (title or "Our Memory Video")[:95],
                 "description": description or "Uploaded from The Us Space",
-                "categoryId": "22"
+                "categoryId": "22",
             },
-            "status": {
-                "privacyStatus": "unlisted",
-                "selfDeclaredMadeForKids": False
-            }
+            "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False},
         }
 
         media = MediaFileUpload(
             temp_path,
             mimetype=mime_type or "video/mp4",
             chunksize=1024 * 1024 * 4,
-            resumable=True
+            resumable=True,
         )
-        request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
+        request = youtube.videos().insert(
+            part="snippet,status", body=body, media_body=media
+        )
 
         response = None
         while response is None:
             _, response = request.next_chunk()
 
         video_id = response.get("id")
+
+        # Cache uploaded video locally if under 40MB so future ZIP downloads are instant
+        if video_id and temp_path and os.path.exists(temp_path):
+            try:
+                if os.path.getsize(temp_path) < 40 * 1024 * 1024:
+                    shutil.copyfile(temp_path, _disk_cache_path(video_id, "ytvideo"))
+            except Exception:
+                pass
+
         return f"https://www.youtube.com/watch?v={video_id}"
 
     finally:
@@ -270,52 +297,103 @@ def upload_to_youtube(file_obj, title: str, description: str = "", mime_type: st
         gc.collect()
 
 
+def _find_cookie_file() -> Optional[str]:
+    for candidate in [
+        os.path.join(BASE_DIR, "secrets", "youtube_cookies.txt"),
+        os.path.join(BASE_DIR, "youtube_cookies.txt"),
+        os.path.join(ROOT_DIR, "secrets", "youtube_cookies.txt"),
+        os.path.join("/etc/secrets", "youtube_cookies.txt"),
+    ]:
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def download_youtube_video_bytes(file_url: str):
     """
-    Downloads a YouTube video (including unlisted videos) in high quality MP4
-    so both Single Downloads and Album ZIP downloads include your videos.
+    Downloads a YouTube video for Album ZIP / Single Download:
+    1. Checks local disk cache first.
+    2. Uses flexible format selector 'b[ext=mp4]/b/best/18' across android_vr, tv_embedded, ios, and mweb clients.
     """
-    if not file_url or not HAS_YTDLP:
+    if not file_url:
         return None, None, None
 
-    yt_match = re.search(r"(?:v=|youtu\.be/|embed/|shorts/|yt:)([a-zA-Z0-9_-]{11})", file_url)
+    yt_match = re.search(
+        r"(?:v=|youtu\.be/|embed/|shorts/|yt:)([a-zA-Z0-9_-]{11})", file_url
+    )
     if not yt_match:
         return None, None, None
 
     video_id = yt_match.group(1)
+
+    # 1. Check local cache first
+    cached_video_path = _disk_cache_path(video_id, "ytvideo")
+    if os.path.isfile(cached_video_path):
+        try:
+            with open(cached_video_path, "rb") as f:
+                return io.BytesIO(f.read()), f"video_{video_id}.mp4", "video/mp4"
+        except Exception:
+            pass
+
+    if not HAS_YTDLP:
+        return None, None, None
+
     watch_url = f"https://www.youtube.com/watch?v={video_id}"
     temp_dir = tempfile.mkdtemp(prefix="yt_dl_")
+    cookie_file = _find_cookie_file()
+
+    client_list = [
+        ["android_vr"],
+        ["tv_embedded"],
+        ["ios"],
+        ["mweb"],
+        ["web_embedded", "web"],
+    ]
 
     try:
-        out_tmpl = os.path.join(temp_dir, "%(title).60s_%(id)s.%(ext)s")
-        ydl_opts = {
-            "format": "best[ext=mp4]/best",
-            "outtmpl": out_tmpl,
-            "quiet": True,
-            "no_warnings": True,
-            "noplaylist": True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([watch_url])
+        for clients in client_list:
+            opts = {
+                "format": "b[ext=mp4]/b/best/18",
+                "outtmpl": os.path.join(temp_dir, f"video_{video_id}.%(ext)s"),
+                "quiet": True,
+                "no_warnings": True,
+                "noplaylist": True,
+                "nocheckcertificate": True,
+                "logger": _QuietYtdlLogger(),
+                "extractor_args": {"youtube": {"player_client": clients}},
+            }
+            if cookie_file:
+                opts["cookiefile"] = cookie_file
 
-        downloaded_files = os.listdir(temp_dir)
-        if not downloaded_files:
-            return None, None, None
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    ydl.download([watch_url])
+                downloaded_files = os.listdir(temp_dir)
+                if downloaded_files:
+                    file_path = os.path.join(temp_dir, downloaded_files[0])
+                    filename = downloaded_files[0]
+                    with open(file_path, "rb") as f:
+                        raw_bytes = f.read()
+                    # Save to local disk cache so we never have to download this video again
+                    if len(raw_bytes) < 40 * 1024 * 1024:
+                        try:
+                            with open(cached_video_path, "wb") as cf:
+                                cf.write(raw_bytes)
+                        except Exception:
+                            pass
+                    return io.BytesIO(raw_bytes), filename, "video/mp4"
+            except Exception:
+                continue
 
-        file_path = os.path.join(temp_dir, downloaded_files[0])
-        filename = downloaded_files[0]
-        with open(file_path, "rb") as f:
-            raw_bytes = f.read()
-
-        return io.BytesIO(raw_bytes), filename, "video/mp4"
-    except Exception as e:
-        print(f"YouTube download warning for {video_id}: {e}")
         return None, None, None
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
 def fetch_drive_file_bytes(file_id: str, size: str = "original"):
+    if file_id in _dead_drive_ids:
+        raise FileNotFoundError(f"Drive file {file_id} was previously marked 404")
+
     if size not in ("thumb", "preview", "original"):
         size = "original"
 
@@ -325,17 +403,30 @@ def fetch_drive_file_bytes(file_id: str, size: str = "original"):
             return cached[0], cached[2], cached[1]
 
     headers = get_drive_auth_headers()
-    meta_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=name,mimeType,thumbnailLink&supportsAllDrives=true"
+    meta_url = f"https://www.googleapis.com/drive/v3/files/{file_id}?fields=name,mimeType,thumbnailLink,trashed&supportsAllDrives=true"
     meta_res = _http_session.get(meta_url, headers=headers, timeout=10)
+    if meta_res.status_code == 404:
+        _dead_drive_ids.add(file_id)
+        raise FileNotFoundError(f"Drive file {file_id} not accessible (404)")
     if meta_res.status_code != 200:
-        raise FileNotFoundError(f"Drive file {file_id} not accessible ({meta_res.status_code})")
+        raise FileNotFoundError(
+            f"Drive file {file_id} not accessible ({meta_res.status_code})"
+        )
 
     meta = meta_res.json()
+    if meta.get("trashed"):
+        _dead_drive_ids.add(file_id)
+        raise FileNotFoundError(f"Drive file {file_id} is in trash")
+
     filename = meta.get("name") or f"memory_{file_id}"
     mime_type = meta.get("mimeType") or "image/jpeg"
     thumb_link = meta.get("thumbnailLink")
 
-    if size in ("thumb", "preview") and mime_type.startswith("image/") and not thumb_link:
+    if (
+        size in ("thumb", "preview")
+        and mime_type.startswith("image/")
+        and not thumb_link
+    ):
         time.sleep(0.6)
         meta_res2 = _http_session.get(meta_url, headers=headers, timeout=10)
         if meta_res2.status_code == 200:
@@ -362,13 +453,11 @@ def download_original_from_drive(file_url: str):
     if not file_url:
         return None, None, None
 
-    # 1. If it's a YouTube video URL, download from YouTube first
+    # 1. If it's a YouTube video, download directly from YouTube (never query deleted drive_id backups)
     if "youtube.com" in file_url or "youtu.be" in file_url:
-        yt_buf, yt_name, yt_mime = download_youtube_video_bytes(file_url)
-        if yt_buf:
-            return yt_buf, yt_name, yt_mime
+        return download_youtube_video_bytes(file_url)
 
-    # 2. Otherwise (or if yt-dlp isn't installed), try Google Drive ID if present
+    # 2. Otherwise download from Google Drive
     drive_id_match = (
         re.search(r"drive_id=([a-zA-Z0-9_-]+)", file_url)
         or re.search(r"drive-image/([a-zA-Z0-9_-]+)", file_url)
@@ -376,47 +465,40 @@ def download_original_from_drive(file_url: str):
     )
     if drive_id_match:
         file_id = drive_id_match.group(1)
-        try:
-            raw_bytes, filename, mime_type = fetch_drive_file_bytes(file_id, size="original")
-            return io.BytesIO(raw_bytes), filename, mime_type
-        except Exception as e:
-            print(f"Drive download skipped for {file_id} ({e}), checking YouTube fallback...")
-            if "youtube.com" in file_url or "youtu.be" in file_url:
-                return download_youtube_video_bytes(file_url)
+        raw_bytes, filename, mime_type = fetch_drive_file_bytes(
+            file_id, size="original"
+        )
+        return io.BytesIO(raw_bytes), filename, mime_type
 
     return None, None, None
 
 
 def delete_media_from_cloud(file_url: str) -> bool:
-    """
-    Permanently deletes media from Google Drive and/or YouTube.
-    """
     if not file_url:
         return False
 
     clean_url = re.sub(r"^(voice#|video#)", "", file_url).strip()
     deleted_any = False
 
-    # 1. Check and Delete from YouTube
-    yt_match = re.search(r"(?:[?&]v=|youtu\.be/|embed/|shorts/|yt:)([a-zA-Z0-9_-]{11})", clean_url)
+    yt_match = re.search(
+        r"(?:[?&]v=|youtu\.be/|embed/|shorts/|yt:)([a-zA-Z0-9_-]{11})", clean_url
+    )
     if yt_match and "drive.google.com" not in clean_url.split("&drive_id=")[0]:
         video_id = yt_match.group(1)
         try:
             youtube = get_youtube_service()
             youtube.videos().delete(id=video_id).execute()
-            print(f"✅ Deleted YouTube video: {video_id}")
             deleted_any = True
         except Exception as e:
-            print(f"⚠️ YouTube delete error for {video_id}: {e}")
+            print(f"YouTube delete note ({video_id}): {e}")
 
-    # 2. Check and Delete from Google Drive
     drive_ids = set()
     for pattern in [
         r"drive_id=([a-zA-Z0-9_-]+)",
         r"drive-image/([a-zA-Z0-9_-]+)",
         r"[?&]id=([a-zA-Z0-9_-]+)",
         r"/file/d/([a-zA-Z0-9_-]+)",
-        r"/d/([a-zA-Z0-9_-]+)"
+        r"/d/([a-zA-Z0-9_-]+)",
     ]:
         for m in re.finditer(pattern, clean_url):
             fid = m.group(1)
@@ -427,7 +509,7 @@ def delete_media_from_cloud(file_url: str) -> bool:
         try:
             drive = get_drive_service()
             for file_id in drive_ids:
-                # Clear local caches first
+                _dead_drive_ids.add(file_id)
                 for sz in ("thumb", "preview", "original"):
                     _ram_cache.pop(f"{file_id}:{sz}", None)
                     try:
@@ -437,30 +519,21 @@ def delete_media_from_cloud(file_url: str) -> bool:
                     except Exception:
                         pass
                 try:
-                    meta_p = _meta_cache_path(file_id)
-                    if os.path.exists(meta_p):
-                        os.remove(meta_p)
-                except Exception:
-                    pass
-
-                # Permanently delete from Google Drive (fallback to moving to Trash if restricted)
-                try:
-                    drive.files().delete(fileId=file_id, supportsAllDrives=True).execute()
-                    print(f"✅ Permanently deleted Drive file: {file_id}")
+                    drive.files().delete(
+                        fileId=file_id, supportsAllDrives=True
+                    ).execute()
                     deleted_any = True
-                except Exception as del_err:
-                    print(f"Direct Drive delete note for {file_id} ({del_err}), moving to trash...")
+                except Exception:
                     try:
                         drive.files().update(
                             fileId=file_id,
                             body={"trashed": True},
-                            supportsAllDrives=True
+                            supportsAllDrives=True,
                         ).execute()
-                        print(f"✅ Moved Drive file to trash: {file_id}")
                         deleted_any = True
-                    except Exception as trash_err:
-                        print(f"⚠️ Could not delete/trash Drive file {file_id}: {trash_err}")
-        except Exception as e:
-            print(f"⚠️ Drive service initialization error during delete: {e}")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     return deleted_any

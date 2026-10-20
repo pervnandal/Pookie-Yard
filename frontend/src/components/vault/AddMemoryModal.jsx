@@ -1,17 +1,17 @@
 import React, { useState, useRef } from 'react';
 import { Icons } from '../common/Icons';
 import { API_BASE_URL, uploadFilesWithProgress } from '../../utils/apiUtils';
+import { serializeVaultDescription } from '../../utils/vaultMetaUtils';
 
-export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) => {
+export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog, defaultCategory = 'timeline' }) => {
   const [title, setTitle] = useState('');
   const [memoryDate, setMemoryDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
-  const [isPrivate, setIsPrivate] = useState(false);
+  const [albumType, setAlbumType] = useState(defaultCategory); // 'timeline' | 'constant' | 'private'
   const [files, setFiles] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
 
-  // Synchronous ref lock to block fast double-clicks before React re-renders
   const isSubmittingRef = useRef(false);
 
   const [isRecording, setIsRecording] = useState(false);
@@ -70,10 +70,17 @@ export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) =
     setIsSubmitting(true);
     setUploadProgress(0);
 
+    const isPrivate = albumType === 'private';
+    const isConstant = albumType === 'constant';
+    const finalDescription = serializeVaultDescription(description, {
+      isConstant,
+      isPrivate
+    });
+
     const formData = new FormData();
     formData.append('title', title.trim());
     formData.append('memory_date', memoryDate);
-    formData.append('description', description);
+    formData.append('description', finalDescription);
     formData.append('is_private', String(isPrivate));
     files.forEach((file) => formData.append('files', file));
 
@@ -87,7 +94,7 @@ export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) =
         setTitle('');
         setDescription('');
         setFiles([]);
-        setIsPrivate(false);
+        setAlbumType('timeline');
         onMemoryAdded();
         onClose();
       },
@@ -105,7 +112,7 @@ export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) =
 
   return (
     <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-stone-900/60 backdrop-blur-md animate-in fade-in duration-200">
-      <div className="bg-white/90 backdrop-blur-2xl border border-white/70 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
+      <div className="bg-white/95 backdrop-blur-2xl border border-white/70 rounded-3xl max-w-lg w-full p-6 sm:p-8 shadow-2xl relative max-h-[90vh] overflow-y-auto custom-scrollbar">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-2xl font-serif font-bold text-stone-800">Add New Memory</h2>
           <button
@@ -120,22 +127,52 @@ export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) =
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          {/* 3-Way Album Destination Selector */}
           <div>
-            <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1">Memory Title</label>
-            <input
-              type="text"
-              required
-              disabled={isSubmitting}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g., Sunset Coffee Date"
-              className="w-full bg-white border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400"
-            />
+            <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+              Where Should This Album Live?
+            </label>
+            <div className="grid grid-cols-3 gap-2 bg-stone-100 p-1 rounded-2xl border border-stone-200">
+              {[
+                { id: 'timeline', label: '🗓️ Timeline' },
+                { id: 'constant', label: '📌 Constant' },
+                { id: 'private', label: '🔒 Private' }
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => setAlbumType(tab.id)}
+                  className={`py-2 rounded-xl text-xs font-bold transition-all ${
+                    albumType === tab.id
+                      ? 'bg-white text-rose-600 shadow-xs'
+                      : 'text-stone-600 hover:text-stone-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1">Date</label>
+              <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1">Memory Title</label>
+              <input
+                type="text"
+                required
+                disabled={isSubmitting}
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={albumType === 'constant' ? "e.g., Widget Snaps 📱" : "e.g., Sunset Coffee Date"}
+                className="w-full bg-white border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-400 focus:ring-1 focus:ring-rose-400"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold uppercase tracking-wider text-stone-500 mb-1">
+                {albumType === 'constant' ? 'Created Date' : 'Memory Date'}
+              </label>
               <input
                 type="date"
                 required
@@ -144,22 +181,6 @@ export const AddMemoryModal = ({ isOpen, onClose, onMemoryAdded, showDialog }) =
                 onChange={(e) => setMemoryDate(e.target.value)}
                 className="w-full bg-white border border-stone-200 rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-rose-400"
               />
-            </div>
-
-            <div className="flex items-end">
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={() => setIsPrivate(!isPrivate)}
-                className={`w-full py-3 px-4 rounded-xl border text-sm font-medium flex items-center justify-center gap-2 transition-all ${
-                  isPrivate
-                    ? 'bg-rose-50 border-rose-300 text-rose-600'
-                    : 'bg-stone-50 border-stone-200 text-stone-600 hover:bg-stone-100'
-                }`}
-              >
-                <Icons.Lock />
-                <span>{isPrivate ? 'Private Memory' : 'Standard Memory'}</span>
-              </button>
             </div>
           </div>
 

@@ -11,7 +11,7 @@ import {
 import ChatPanel from './ChatPanel';
 import NotepadPanel from './NotepadPanel';
 
-export const DatePlanner = ({ showDialog }) => {
+export const DatePlanner = ({ showDialog, memories = [], onOpenMemory }) => {
   const [userId] = useState(() => {
     let stored = localStorage.getItem('us_planner_id');
     if (!stored) {
@@ -22,6 +22,7 @@ export const DatePlanner = ({ showDialog }) => {
   });
 
   const [isChatFullscreen, setIsChatFullscreen] = useState(false);
+  const [incomingTheaterEvent, setIncomingTheaterEvent] = useState(null);
 
   const [messages, setMessages] = useState(() => {
     try {
@@ -91,7 +92,7 @@ export const DatePlanner = ({ showDialog }) => {
     if (activeDocId !== null && activeDocId !== undefined) {
       try {
         localStorage.setItem(ACTIVE_DOC_CACHE_KEY, String(activeDocId));
-      } catch {}
+      } catch { }
     }
     setPartnerEditing(false);
     clearTimeout(padTypingFallback.current);
@@ -100,7 +101,7 @@ export const DatePlanner = ({ showDialog }) => {
   useEffect(() => {
     try {
       localStorage.setItem(ITINERARIES_CACHE_KEY, JSON.stringify(itineraries));
-    } catch {}
+    } catch { }
   }, [itineraries]);
 
   const safeSend = useCallback((payload) => {
@@ -130,7 +131,7 @@ export const DatePlanner = ({ showDialog }) => {
           setItineraries(data);
           try {
             localStorage.setItem(ITINERARIES_CACHE_KEY, JSON.stringify(data));
-          } catch {}
+          } catch { }
           if (data.length > 0 && !activeDocIdRef.current) {
             setActiveDocId(data[0].id);
             setActiveContent(data[0].content || '');
@@ -216,6 +217,11 @@ export const DatePlanner = ({ showDialog }) => {
           return;
         }
 
+        if (data.type === 'theater_sync') {
+          setIncomingTheaterEvent({ ...data, _ts: Date.now() });
+          return;
+        }
+
         if (data.senderId === userId) return;
 
         if (data.type === 'chat') {
@@ -295,7 +301,7 @@ export const DatePlanner = ({ showDialog }) => {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ content: activeContentRef.current }),
           keepalive: true
-        }).catch(() => {});
+        }).catch(() => { });
       }
     };
   }, []);
@@ -417,8 +423,7 @@ export const DatePlanner = ({ showDialog }) => {
           setIsChatFullscreen={setIsChatFullscreen}
         />
 
-        {/* Hide Notepad on mobile when Chat is in Fullscreen so background page height doesn't scroll */}
-        <div className={isChatFullscreen ? 'hidden md:flex flex-1 h-full min-w-0' : 'flex-1 flex h-[600px] md:h-full min-w-0'}>
+        <div className={isChatFullscreen ? 'hidden md:flex flex-1 h-full min-w-0' : 'flex-1 flex h-[620px] md:h-full min-w-0'}>
           <NotepadPanel
             itineraries={itineraries}
             activeDocId={activeDocId}
@@ -430,6 +435,10 @@ export const DatePlanner = ({ showDialog }) => {
             onCreateNewPlan={createNewPlan}
             onRenamePlan={renamePlan}
             onDeleteCurrentPlan={deleteCurrentPlan}
+            memories={memories}
+            onOpenMemory={onOpenMemory}
+            safeSend={safeSend}
+            incomingTheaterEvent={incomingTheaterEvent}
           />
         </div>
       </div>
